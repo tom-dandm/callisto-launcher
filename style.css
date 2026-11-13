@@ -49,7 +49,7 @@ a { color: var(--accent); }
 .bar h1 { flex: 1; min-width: 0; margin: 0 8px; font-size: 18px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar-actions { display: flex; align-items: center; gap: 0; flex: none; }
 @media (max-width: 420px) { .bar .icon-btn { min-width: 40px; padding: 0 6px; } .bar h1 { font-size: 17px; margin: 0 4px; } }
-#view { overflow-y: auto; padding: var(--gap) var(--gap) calc(var(--gap) * 5); outline: none; -webkit-overflow-scrolling: touch; }
+#view { overflow-y: auto; padding: var(--gap) var(--gap) calc(var(--gap) * 2 + env(safe-area-inset-bottom)); outline: none; -webkit-overflow-scrolling: touch; }
 .wrap { max-width: 760px; margin: 0 auto; }
 
 /* icons */
