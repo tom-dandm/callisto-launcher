@@ -898,10 +898,19 @@ async function driveList(q) {
 const mimeQ = () => '(' + [GFOLDER, GSHORTCUT, ...DRIVE_MIMES].map(m => `mimeType='${m}'`).join(' or ') + ')';
 const qstr = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
+// Google only exports a Doc up to 10 MB. HTML (kept for italics and bold) is bulky, so a long Doc
+// or one with pictures can pass that: then ask for EPUB (zipped, keeps the styling), then plain text.
+const tooLarge = e => e.status === 403 && /too large|exportSizeLimitExceeded/i.test(e.message);
 async function driveFetch(f) {
   const kind = kindOf(f.name, f.mimeType);
-  if (kind === 'gdoc') return { kind, data: await gsend(`${DRIVE}/files/${f.id}/export?mimeType=text/html`, 'text') };
-  return { kind, data: await gsend(`${DRIVE}/files/${f.id}?alt=media&supportsAllDrives=true`, 'buf') };
+  if (kind !== 'gdoc') return { kind, data: await gsend(`${DRIVE}/files/${f.id}?alt=media&supportsAllDrives=true`, 'buf') };
+  const exp = type => `${DRIVE}/files/${f.id}/export?mimeType=${encodeURIComponent(type)}`;
+  try { return { kind, data: await gsend(exp('text/html'), 'text') }; }
+  catch (e) { if (!tooLarge(e)) throw e; }
+  try { return { kind: 'epub', data: await gsend(exp('application/epub+zip'), 'buf') }; }
+  catch (e) { if (!tooLarge(e)) throw e; }
+  try { return { kind: 'txt', data: await gsend(exp('text/plain'), 'buf') }; }
+  catch (e) { if (tooLarge(e)) throw new Error('too large for Google to export, even as plain text. Download it as a Word file and add that instead.'); throw e; }
 }
 
 // Expands chosen folders into files (with the folder each came from), depth-limited.
@@ -1258,6 +1267,7 @@ async function openStoryManage(id) {
   openSheet([
     h('h2', s.title),
     h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
+    universeField(s, refresh),
     h('div.btn-row',
       h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue (${pct}%)` : pg.status === 'read' ? 'Read again' : 'Read'),
       h('button.btn', { type: 'button', 'aria-pressed': String(pg.fav), on: { click: () => { setProg(id, { fav: !pg.fav }); refresh(); rerenderSoon(); } } }, pg.fav ? '★ Favourite' : '☆ Favourite'),
@@ -1345,6 +1355,25 @@ function openStoryReader(id) {
     isAdmin() ? h('div.manage-link', h('button.btn.small', { type: 'button', on: { click: () => openStoryManage(id) } }, 'Edit details'),
       !s.summary || s.summaryStale ? h('span.muted.small', s.summary ? 'Summary out of date' : 'No summary yet') : null) : null,
   ]);
+}
+
+// The story's universe, changed in place: it goes to the end of the new universe's timeline.
+function universeField(s, after) {
+  const sel = h('select.field', { 'aria-label': 'Universe' },
+    h('option', { value: '' }, 'Unsorted'), universesSorted().map(x => h('option', { value: x.id }, x.name)), h('option', { value: '__new' }, '+ New universe…'));
+  sel.value = s.universeId || '';
+  sel.addEventListener('change', async () => {
+    let to = sel.value;
+    if (to === '__new') {
+      const name = await ask({ title: 'New universe', input: { placeholder: 'Name' }, ok: 'Create' });
+      if (!name) return after();
+      to = (await newUniverse(name)).id;
+    }
+    await placeStories([s.id], to, null);
+    toast(`Moved to ${uName(to)}.`);
+    rerenderSoon(); after();
+  });
+  return h('label.field-row', h('span', 'Universe'), sel);
 }
 
 function askEra(eras, current) {
@@ -1724,8 +1753,9 @@ async function importDrive(st) {
     try {
       const kind = kindOf(f.name, f.mimeType);
       if (!kind) throw new Error('not a supported file type');
-      const { data } = await driveFetch(f);
-      const p = await parseAny(f.name, kind, data);
+      const got = await driveFetch(f);
+      const p = await parseAny(f.name, got.kind, got.data);
+      if (got.kind !== kind) p.title = cleanTitle(f.name);
       items.push({ ...p, sortName: f.name, folder: f.folder || null, folderPath: f.folder || '', source: { kind: 'gdrive', name: f.name, driveId: f.id, mime: f.mimeType, modifiedTime: f.modifiedTime } });
     } catch (e) { errors.push(`${f.name}: ${e.message}`); }
     n++;
@@ -1750,9 +1780,8 @@ async function refreshFromDrive(ids, force, quiet) {
       const f = await gfetch(`${DRIVE}/files/${s.source.driveId}?fields=id,name,mimeType,modifiedTime,trashed&supportsAllDrives=true`);
       if (f.trashed) { gone++; return; }
       if (!force && f.modifiedTime === s.source.modifiedTime) return;
-      const kind = kindOf(f.name, f.mimeType);
-      const { data } = await driveFetch(f);
-      const p = await parseAny(f.name, kind, data);
+      const got = await driveFetch(f);
+      const p = await parseAny(f.name, got.kind, got.data);
       const old = await getText(s.id);
       if (old && old.plain === p.plain && !force) { await saveStories({ ...S.stories.get(s.id), source: { ...s.source, modifiedTime: f.modifiedTime } }); return; }
       await dbPut('texts', { id: s.id, html: p.html, plain: p.plain });
@@ -1912,8 +1941,9 @@ function viewLibrary(v) {
   for (const u of universesSorted()) {
     const list = storiesIn(u.id);
     const unread = list.filter(s => prog(s.id).status === 'unread').length;
-    cards.append(h('a.card', { href: '#/u/' + u.id, css: { '--c': u.color } }, h('h3', u.name),
-      h('p', `${list.length} stor${list.length === 1 ? 'y' : 'ies'}${unread ? ` · ${unread} unread` : ''}${list.length ? ' · ' + fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''}`)));
+    cards.append(h('a.card' + (u.icon ? '.has-icon' : ''), { href: '#/u/' + u.id, css: { '--c': u.color } }, uIcon(u),
+      h('div', h('h3', u.name),
+        h('p', `${list.length} stor${list.length === 1 ? 'y' : 'ies'}${unread ? ` · ${unread} unread` : ''}${list.length ? ' · ' + fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''}`))));
   }
   const loose = storiesIn('');
   if (loose.length) cards.append(h('a.card', { href: '#/u/_', css: { '--c': 'var(--ink-2)' } }, h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`)));
@@ -1935,6 +1965,8 @@ function viewUniverse(v, id) {
       h('button', { type: 'button', on: { click: () => { closeSheet(); summariseMany(all.filter(s => !s.summary || s.summaryStale).map(s => s.id)); } } }, `Summarise the ${all.filter(s => !s.summary || s.summaryStale).length} without a summary`),
       all.some(s => s.source?.driveId) ? h('button', { type: 'button', on: { click: () => { closeSheet(); refreshFromDrive(all.map(s => s.id)); } } }, 'Check Google Drive for changes') : null,
       uni ? h('button', { type: 'button', on: { click: async () => { const n = await ask({ title: 'Rename universe', input: { value: uni.name }, ok: 'Rename' }); if (n) { await saveUniverse({ ...uni, name: n }); render(); } } } }, 'Rename') : null,
+      uni ? h('button', { type: 'button', on: { click: () => { closeSheet(); pickIcon(uni); } } }, uni.icon ? 'Change icon…' : 'Icon…') : null,
+      uni?.icon ? h('button', { type: 'button', on: { click: async () => { const { icon, ...rest } = uni; await saveUniverse(rest); closeSheet(); render(); } } }, 'Remove icon') : null,
       uni ? h('button', { type: 'button', on: { click: () => colourFlow(uni) } }, 'Colour') : null,
       uni ? h('button', {
         type: 'button', on: {
@@ -1974,7 +2006,7 @@ function viewUniverse(v, id) {
     return;
   }
   const words = all.reduce((n, s) => n + s.words, 0);
-  w.append(h('p.muted.small', { style: { margin: '0 0 12px' } }, `${all.length} stor${all.length === 1 ? 'y' : 'ies'} · ${fmtWords(words)} · ${all.filter(s => prog(s.id).status === 'read').length} read`));
+  w.append(h('div.u-head', uIcon(uni, 'u-icon-big'), h('p.muted.small', { style: { margin: 0 } }, `${all.length} stor${all.length === 1 ? 'y' : 'ies'} · ${fmtWords(words)} · ${all.filter(s => prog(s.id).status === 'read').length} read`)));
   let shown = all;
   if (!arranging) {
     const used = new Map();
@@ -2001,6 +2033,28 @@ function viewUniverse(v, id) {
   v.append(w);
   if (arranging) { wireDrag(list, u); drawBulk(); }
 }
+
+// A universe's icon: an image from the device, cropped square and kept small (published with the library).
+function pickIcon(uni) {
+  const input = h('input', { type: 'file', accept: 'image/*' });
+  input.addEventListener('change', async () => {
+    const f = input.files[0];
+    if (!f) return;
+    try { await setIcon(uni.id, f); toast('Icon set.'); render(); }
+    catch { toast('That image could not be read.'); }
+  });
+  input.click();
+}
+async function setIcon(id, file) {
+  const img = await createImageBitmap(file);
+  const side = Math.min(img.width, img.height), size = 160;
+  const c = h('canvas', { width: size, height: size });
+  c.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+  let url = c.toDataURL('image/webp', .85);
+  if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/jpeg', .85);
+  await saveUniverse({ ...S.universes.get(id), icon: url });
+}
+const uIcon = (u, cls = 'u-icon') => u?.icon ? h('img.' + cls, { src: u.icon, alt: '' }) : null;
 
 function colourFlow(uni) {
   openSheet([
@@ -2143,27 +2197,35 @@ function viewSearch(v) {
 
 function viewTags(v) {
   const A = isAdmin();
-  setBar('Tags', { actions: A ? [h('button.btn.small', { type: 'button', on: { click: newTagFlow } }, '+ New tag')] : [] });
+  setBar('Tags');
   const w = h('div.wrap');
+  if (A && S.tags.size) w.append(h('div.btn-row', { style: { marginBottom: '16px' } }, h('button.btn.primary', { type: 'button', on: { click: () => newTagFlow() } }, '+ New tag')));
   if (!S.tags.size) {
-    w.append(A ? h('div.empty', h('h2', 'No tags yet'), h('p', 'Tags can be characters, pairings, genres, tropes, moods or anything else. Add them from a story, or make some here.'), h('div.btn-row', h('button.btn.primary', { type: 'button', on: { click: newTagFlow } }, 'New tag'))) : h('div.empty', h('h2', 'No tags yet')));
+    w.append(A ? h('div.empty', h('h2', 'No tags yet'), h('p', 'Tags can be characters, pairings, genres, tropes, moods or anything else. Add them from a story, or make some here.'), h('div.btn-row', h('button.btn.primary', { type: 'button', on: { click: () => newTagFlow() } }, '+ New tag'))) : h('div.empty', h('h2', 'No tags yet')));
     v.append(w); return;
   }
   for (const g of groups()) {
     const ts = tagsSorted().filter(t => (t.group || 'Other') === g);
     if (!ts.length) continue;
-    w.append(h('div.tag-group', h('div.section-h', h('h2', g)),
+    w.append(h('div.tag-group', h('div.section-h', h('h2', g), A ? h('button.chip.add', { type: 'button', on: { click: () => newTagFlow(g) } }, `+ Add to ${g}`) : null),
       ts.map(t => h('div.tag-line', { role: 'button', tabindex: '0', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id), keydown: e => { if (e.key === 'Enter') go('#/tag/' + t.id); } } },
         h('span.sw'), h('span', t.name), h('span.n', tagUse(t.id))))));
   }
   v.append(w);
 }
 
-async function newTagFlow() {
-  const sel = h('select.field', { style: { marginTop: '10px' } }, groups().map(g => h('option', { value: g }, g)));
-  sel.value = 'Character';
-  const name = await ask({ title: 'New tag', input: { placeholder: 'Name' }, extra: sel, ok: 'Create' });
-  if (name) { await findOrMakeTag(name, sel.value); render(); }
+async function newTagFlow(group = 'Character') {
+  const sel = h('select.field', { 'aria-label': 'Group' }, groups().map(g => h('option', { value: g }, g)), h('option', { value: '__new' }, 'New group…'));
+  sel.value = group;
+  const own = h('input.field', { type: 'text', placeholder: 'Name of the new group', hidden: true, style: { marginTop: '10px' } });
+  sel.addEventListener('change', () => { own.hidden = sel.value !== '__new'; if (!own.hidden) own.focus(); });
+  const name = await ask({ title: 'New tag', input: { placeholder: 'Tag name, e.g. Rhea or Slow burn' }, extra: [h('label.small.muted', { style: { display: 'block', margin: '12px 0 6px' } }, 'Group'), sel, own], ok: 'Create' });
+  if (!name) return;
+  const g = sel.value === '__new' ? own.value.trim() || 'Other' : sel.value;
+  if ([...S.tags.values()].some(t => lc(t.name) === lc(name) && lc(t.group) === lc(g))) return toast(`"${name}" is already a tag.`);
+  await saveTag({ id: uid(), name: name.trim(), group: g, createdAt: Date.now() });
+  toast(`Tag "${name}" made. Add it to stories from their Edit details.`);
+  render();
 }
 
 function viewTag(v, id) {
