@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Callisto</title>
 <meta name="description" content="A reading app for a collection of stories, arranged by universe and timeline.">
-<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#16151a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4efe6">
+<meta name="color-scheme" content="light">
 <meta name="robots" content="noindex">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -23,12 +23,6 @@
 
   <main id="view" tabindex="-1"></main>
 
-  <nav class="tabs" aria-label="Sections">
-    <a href="#/" data-tab="library"><span class="ico" data-icon="library"></span><span>Library</span></a>
-    <a href="#/search" data-tab="search"><span class="ico" data-icon="search"></span><span>Search</span></a>
-    <a href="#/tags" data-tab="tags"><span class="ico" data-icon="tag"></span><span>Tags</span></a>
-    <a href="#/settings" data-tab="settings"><span class="ico" data-icon="gear"></span><span>Settings</span></a>
-  </nav>
 </div>
 
 <section id="reader" class="reader" hidden aria-label="Reader">
@@ -56,7 +50,6 @@
 
 <input type="file" id="filePick" multiple hidden
   accept=".txt,.text,.md,.markdown,.html,.htm,.xhtml,.docx,.odt,.rtf,.epub,text/plain,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,application/epub+zip">
-<input type="file" id="backupPick" hidden accept=".json,.gz,application/json,application/gzip">
 
 <script src="app.js"></script>
 </body>

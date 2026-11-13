@@ -8,12 +8,6 @@ const DRIVE = 'https://www.googleapis.com/drive/v3';
 const GDOC = 'application/vnd.google-apps.document';
 const GFOLDER = 'application/vnd.google-apps.folder';
 const GSHORTCUT = 'application/vnd.google-apps.shortcut';
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm';
-const MODELS = [
-  ['claude-opus-5-5', 'Claude Opus 5.5 (best)'],
-  ['claude-sonnet-5-5', 'Claude Sonnet 5.5'],
-  ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)'],
-];
 const KINDS = {
   [GDOC]: 'gdoc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
@@ -73,7 +67,6 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
-  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>',
   folder: '<path d="M3.5 6.5a1 1 0 0 1 1-1h4.6l2 2h8.4a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/>',
   doc: '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/>',
 };
@@ -934,119 +927,6 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, run));
 }
 
-/* ───────────── Claude ───────────── */
-
-let sdk;
-async function claude() {
-  const key = pref.get('aiKey', '');
-  if (!key) throw new Error('Add your Claude API key in Settings first.');
-  sdk ||= (await import(SDK_URL)).default;
-  return new sdk({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 2 });
-}
-function aiError(e) {
-  const A = sdk;
-  if (A && e instanceof A.AuthenticationError) return 'Claude did not accept the API key. Check it in Settings.';
-  if (A && e instanceof A.PermissionDeniedError) return 'This API key is not allowed to use that model.';
-  if (A && e instanceof A.RateLimitError) return 'Claude is busy (rate limit). Try again in a minute.';
-  if (A && e instanceof A.APIConnectionError) return 'Could not reach Claude. Are you online?';
-  if (A && e instanceof A.APIError) return 'Claude error: ' + (e.error?.error?.message || e.message);
-  return e.message || String(e);
-}
-async function askClaude({ system, prompt, schema, maxTokens = 4000 }) {
-  const client = await claude();
-  const model = pref.get('aiModel', MODELS[0][0]);
-  const req = {
-    model, max_tokens: maxTokens, system,
-    messages: [{ role: 'user', content: prompt }],
-    output_config: { effort: 'low', format: { type: 'json_schema', schema } },
-  };
-  let r;
-  if (model === 'claude-haiku-5-5') r = await client.messages.create(req);
-  else r = await client.beta.messages.create({ ...req, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
-  if (r.stop_reason === 'refusal') throw new Error('Claude declined this one.');
-  if (r.stop_reason === 'max_tokens') throw new Error('Claude ran out of room for the answer. Try again.');
-  const text = r.content.filter(b => b.type === 'text').map(b => b.text).join('');
-  try { return JSON.parse(text); } catch { throw new Error('Claude sent back something unreadable. Try again.'); }
-}
-
-const SUMMARY_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['summary', 'characters', 'tags'],
-  properties: {
-    summary: { type: 'string' },
-    characters: { type: 'array', items: { type: 'string' } },
-    tags: { type: 'array', items: { type: 'string' } },
-  },
-};
-
-async function summarise(id) {
-  const s = S.stories.get(id);
-  const t = await getText(id);
-  if (!s || !t) throw new Error('Story not found.');
-  if (t.plain.length > 2500000) throw new Error('This story is too long for one summary.');
-  const list = storiesIn(s.universeId);
-  const i = list.findIndex(x => x.id === id);
-  const prev = list[i - 1];
-  const tagList = groups().map(g => {
-    const names = tagsSorted().filter(x => (x.group || 'Other') === g).map(x => x.name);
-    return names.length ? `${g}: ${names.join(', ')}` : '';
-  }).filter(Boolean).join('\n') || '(none yet)';
-  const spoil = pref.get('aiSpoilers', 'light') === 'full'
-    ? 'Cover the whole plot, ending included.'
-    : 'Do not give away the ending or major twists.';
-  const prompt = [
-    `Universe: ${uName(s.universeId)}`,
-    s.universeId ? `Place in its timeline: story ${i + 1} of ${list.length}${s.era ? `, era "${s.era}"` : ''}` : '',
-    prev ? `The story before it in the timeline: "${prev.title}"${prev.summary ? ` (${prev.summary})` : ''}` : '',
-    `Tags the reader already uses, by group:\n${tagList}`,
-    '',
-    'Write a catalogue entry for this story, for the reader who owns it, so they can recall it or pick it to read.',
-    `- summary: 2 to 4 sentences of plain prose in the present tense. Say who it is about and what happens. ${spoil} Do not repeat the title.`,
-    '- characters: the main named characters, by the name the story uses most.',
-    '- tags: up to 6 tags that fit. Use the reader\'s existing tag names exactly where they fit; add a new tag only when it is clearly useful (genre, trope, mood).',
-    '',
-    `<story title="${esc(s.title)}">`,
-    t.plain,
-    '</story>',
-  ].filter(x => x !== '').join('\n');
-  const r = await askClaude({ system: 'You write short catalogue entries for a private library of fiction.', prompt, schema: SUMMARY_SCHEMA, maxTokens: 3000 });
-  const fresh = S.stories.get(id);
-  await saveStories({ ...fresh, summary: r.summary.trim(), summaryAt: Date.now(), summaryStale: false, sugg: { characters: r.characters || [], tags: r.tags || [] } });
-  return S.stories.get(id);
-}
-
-let queue = null;
-async function summariseMany(ids) {
-  if (queue) return toast('Summaries are already running.');
-  if (!pref.get('aiKey', '')) return toast('Add your Claude API key in Settings first.', { label: 'Settings', run: () => go('#/settings') });
-  queue = { stop: false, done: 0, fail: 0, total: ids.length, last: '' };
-  const show = () => toast(`Summarising: ${queue.done + queue.fail} of ${queue.total} done…`, { label: 'Stop', run: () => { queue.stop = true; } }, 0);
-  show();
-  await pool(ids, 2, async id => {
-    if (queue.stop) return;
-    try { await summarise(id); queue.done++; } catch (e) { queue.fail++; queue.last = aiError(e); if (/API key|not allowed|reach Claude/.test(queue.last)) queue.stop = true; }
-    if (!queue.stop) show();
-    rerenderSoon();
-  });
-  const q = queue; queue = null;
-  toast(`${q.done} summar${q.done === 1 ? 'y' : 'ies'} written${q.fail ? `, ${q.fail} failed: ${q.last}` : ''}${q.stop && q.done + q.fail < q.total ? ' (stopped)' : ''}.`, null, 7000);
-  render();
-}
-
-const AI_SEARCH_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['ids', 'note'],
-  properties: { ids: { type: 'array', items: { type: 'string' } }, note: { type: 'string' } },
-};
-async function aiSearch(question) {
-  await loadAllTexts();
-  const lines = [...S.stories.values()].map(s => {
-    const tags = s.tags.map(id => S.tags.get(id)?.name).filter(Boolean).join(', ');
-    const about = (s.summary || s.blurb || (S.texts.get(s.id)?.plain || '').slice(0, 400)).replace(/\s+/g, ' ');
-    return `${s.id} | ${s.title} | ${uName(s.universeId)}${s.era ? ' / ' + s.era : ''} | ${tags} | ${about}`;
-  });
-  const prompt = `This is the reader's library, one story per line: id | title | universe / era | tags | about.\n\n${lines.join('\n')}\n\nThe reader asks: ${question}\n\nReturn the ids of the stories that answer this, best match first, at most 30 (ids exactly as given). In note, say in one short sentence what you found, or that nothing matches.`;
-  return askClaude({ system: 'You help a reader find stories in their own library.', prompt, schema: AI_SEARCH_SCHEMA, maxTokens: 2000 });
-}
-
 /* ───────────── search ───────────── */
 
 function parseQuery(q) {
@@ -1234,17 +1114,6 @@ async function openStoryManage(id) {
   const list = storiesIn(s.universeId);
   const i = list.findIndex(x => x.id === id);
   const tags = s.tags.map(t => S.tags.get(t)).filter(Boolean);
-  const suggestions = (() => {
-    if (!s.sugg) return [];
-    const have = new Set(tags.map(t => lc(t.name)));
-    const out = [];
-    for (const n of s.sugg.characters || []) if (!have.has(lc(n))) out.push({ name: n, group: 'Character' });
-    for (const n of s.sugg.tags || []) if (!have.has(lc(n)) && !out.some(o => lc(o.name) === lc(n))) {
-      const existing = [...S.tags.values()].find(t => lc(t.name) === lc(n));
-      out.push({ name: existing?.name || n, group: existing?.group || 'Other' });
-    }
-    return out;
-  })();
   const refresh = () => openStoryManage(id);
   const eras = [...new Set(list.map(x => x.era).filter(Boolean))];
   const pg = prog(id);
@@ -1254,34 +1123,16 @@ async function openStoryManage(id) {
     s.summary ? h('p.summary', s.summary) : h('p.muted.small', 'No summary yet.'),
     s.summaryStale && s.summary ? h('p.muted.small', 'The text has changed since this summary was written.') : null,
     s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null);
-  const sumBtn = h('button.btn.small', {
-    type: 'button',
-    on: {
-      click: async e => {
-        const b = e.currentTarget; b.disabled = true; b.textContent = 'Summarising…';
-        try { await summarise(id); refresh(); rerenderSoon(); } catch (err) { toast(aiError(err), null, 6000); b.disabled = false; b.textContent = 'Try again'; }
-      },
-    },
-  }, icon('sparkle'), s.summary ? 'Rewrite summary' : 'Summarise with Claude');
-
   openSheet([
     h('h2', s.title),
     h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
     universeField(s, refresh),
     storyActions(id, () => { refresh(); rerenderSoon(); }),
     h('h3', 'Summary'), summaryBox,
-    h('div.btn-row', { style: { marginTop: '10px' } }, sumBtn),
     h('h3', 'Tags'),
     h('div.chips',
       tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, title: 'Remove this tag', on: { click: async () => { await saveStories({ ...s, tags: s.tags.filter(x => x !== t.id) }); refresh(); rerenderSoon(); } } }, t.name, h('span.x', '×'))),
       h('button.chip.add', { type: 'button', on: { click: () => pickTags([id], refresh) } }, '+ Tag')),
-    suggestions.length ? [
-      h('p.muted.small', { style: { margin: '12px 0 6px' } }, "Claude's suggestions. Tap one to add it."),
-      h('div.chips', suggestions.map(sg => h('button.chip.sugg', {
-        type: 'button', css: { '--c': GROUP_COLORS[lc(sg.group)] || hashColor(sg.group) },
-        on: { click: async () => { const t = await findOrMakeTag(sg.name, sg.group); const cur = S.stories.get(id); if (!cur.tags.includes(t.id)) await saveStories({ ...cur, tags: [...cur.tags, t.id] }); refresh(); rerenderSoon(); } },
-      }, sg.name, h('span.small.muted', sg.group === 'Character' ? ' · character' : '')))),
-    ] : null,
     h('h3', 'Timeline'),
     h('div.btn-row',
       h('button.btn.small', { type: 'button', disabled: i <= 0, on: { click: async () => { const ids = list.map(x => x.id); [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↑ Earlier'),
@@ -1346,8 +1197,7 @@ function openStoryReader(id) {
     s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null,
     tags.length ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)))] : null,
     s.universeId && (list[i - 1] || list[i + 1]) ? [h('h3', 'In the timeline'), h('div.near', near(list[i - 1], 'Before this'), near(list[i + 1], 'After this'))] : null,
-    isAdmin() ? h('div.manage-link', h('button.btn.small', { type: 'button', on: { click: () => openStoryManage(id) } }, 'Edit details'),
-      !s.summary || s.summaryStale ? h('span.muted.small', s.summary ? 'Summary out of date' : 'No summary yet') : null) : null,
+    isAdmin() ? h('div.manage-link', h('button.btn.small', { type: 'button', on: { click: () => openStoryManage(id) } }, 'Edit details')) : null,
   ]);
 }
 
@@ -1554,7 +1404,6 @@ function importOptions(items, errors = [], ctx = {}) {
   fill();
   const perFolder = h('input', { type: 'checkbox', checked: folders.length > 1 });
   const ao3 = h('input', { type: 'checkbox', checked: pref.get('ao3Tags', false) });
-  const sum = h('input', { type: 'checkbox', checked: !!pref.get('aiKey', '') && pref.get('sumOnImport', false), disabled: !pref.get('aiKey', '') });
   const dupSel = h('select.field', h('option', { value: 'update' }, 'Update their text, keep their place and tags'), h('option', { value: 'skip' }, 'Skip them'), h('option', { value: 'copy' }, 'Add them again as copies'));
   const era = h('input.field', { type: 'text', placeholder: 'Era for all of these (optional)' });
   const tagBox = h('div.chips');
@@ -1606,9 +1455,8 @@ function importOptions(items, errors = [], ctx = {}) {
     uHead, uSel,
     posWrap,
     h('h3', 'Era and tags'), era, h('div', { style: { marginTop: '10px' } }, tagBox),
-    h('h3', 'Options'),
+    hasAo3 ? h('h3', 'Options') : null,
     hasAo3 ? h('label.check', ao3, 'Use the AO3 tags in these files (fandom, relationships, characters, additional tags)') : null,
-    h('label.check', sum, pref.get('aiKey', '') ? 'Write a summary of each with Claude' : 'Write summaries with Claude (add an API key in Settings first)'),
     dups ? [h('h3', `${dups} already in your library`), dupSel] : null,
     h('div.foot',
       h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
@@ -1616,14 +1464,13 @@ function importOptions(items, errors = [], ctx = {}) {
         type: 'button', on: {
           click: async e => {
             e.currentTarget.disabled = true;
-            pref.set('ao3Tags', ao3.checked); if (!sum.disabled) pref.set('sumOnImport', sum.checked);
+            pref.set('ao3Tags', ao3.checked);
             const ids = await commitImport(items, { u, at, perFolder: folders.length > 0 && perFolder.checked, tagIds: [...tagIds], era: era.value.trim(), ao3: hasAo3 && ao3.checked, dup: dupSel.value, dupOf });
             S.importPreset = null;
             closeSheet();
             const target = folders.length && perFolder.checked ? '#/' : '#/u/' + (u || '_');
             toast(`Added ${ids.added} stor${ids.added === 1 ? 'y' : 'ies'}${ids.updated ? `, updated ${ids.updated}` : ''}${ids.skipped ? `, skipped ${ids.skipped}` : ''}.`, { label: 'Open', run: () => go(target) }, 6000);
             if (location.hash !== target) go(target); else render();
-            if (sum.checked && !sum.disabled && ids.toSummarise.length) summariseMany(ids.toSummarise);
           },
         },
       }, 'Add to library')),
@@ -1634,7 +1481,7 @@ const AO3_GROUPS = { Fandom: 'Fandom', Fandoms: 'Fandom', Relationship: 'Pairing
 
 async function commitImport(items, o) {
   const now = Date.now();
-  const res = { added: 0, updated: 0, skipped: 0, toSummarise: [] };
+  const res = { added: 0, updated: 0, skipped: 0 };
   const groupsByU = new Map();
   const folderU = new Map();
   for (const it of items) {
@@ -1673,7 +1520,6 @@ async function commitImport(items, o) {
     await saveStories(s);
     if (!groupsByU.has(u)) groupsByU.set(u, []);
     groupsByU.get(u).push(s.id);
-    res.toSummarise.push(s.id);
     res.added++;
   }
   for (const [u, ids] of groupsByU) await placeStories(ids, u, o.perFolder ? null : o.at);
@@ -1920,7 +1766,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
 
 function viewLibrary(v) {
   const A = isAdmin();
-  setBar('Callisto', { actions: A ? [iconBtn('plus', 'Add stories', () => addFlow())] : [] });
+  setBar('Callisto', { actions: [A ? iconBtn('plus', 'Add stories', () => addFlow()) : null, iconBtn('gear', 'Settings', () => go('#/settings'))] });
   if (!A && !S.stories.size) {
     v.append(h('div.wrap.empty',
       h('h2', S.loadError ? 'Could not load the library' : 'Nothing to read yet'),
@@ -1938,15 +1784,18 @@ function viewLibrary(v) {
     return;
   }
   const w = h('div.wrap');
+  const home = h('div.home');
+  searchUI(w, home);
+  w.append(home);
   const recent = [...S.stories.values()].filter(s => prog(s.id).status === 'reading').sort((a, b) => prog(b.id).lastRead - prog(a.id).lastRead).slice(0, 10);
   if (recent.length) {
-    w.append(h('div.section-h', h('h2', 'Continue reading')),
+    home.append(h('div.section-h', h('h2', 'Continue reading')),
       h('div.recent', recent.map(s => h('a.card.cont', { href: '#/read/' + s.id },
         h('div.cont-top', uTile(S.universes.get(s.universeId) || { name: '·', color: 'var(--ink-2)' }, 'u-icon-sm'),
           h('div', h('h3', s.title), h('p', uName(s.universeId) + (s.era ? ' · ' + s.era : '')))),
         h('div.bar-mini', h('i', { style: { width: Math.round(prog(s.id).readPos * 100) + '%' } }))))));
   }
-  w.append(h('div.section-h', h('h2', 'Universes'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
+  home.append(h('div.section-h', h('h2', 'Universes'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
   const cards = h('div.cards');
   for (const u of universesSorted()) {
     const list = storiesIn(u.id);
@@ -1958,7 +1807,13 @@ function viewLibrary(v) {
   const loose = storiesIn('');
   if (loose.length) cards.append(h('a.card.has-icon', { href: '#/u/_' }, uTile({ name: '·', color: 'var(--ink-2)' }), h('div', h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`))));
   if (!cards.children.length) cards.append(h('p.muted', 'No universes yet.'));
-  w.append(cards);
+  home.append(cards);
+  // Tags, most used first: tap one for its stories. The full list (and managing tags) is "All tags".
+  const used = tagsSorted().map(t => [t, tagUse(t.id)]).filter(([t, n]) => n || A).sort((a, b) => b[1] - a[1]);
+  if (used.length) {
+    home.append(h('div.section-h', h('h2', 'Tags'), h('a.small', { href: '#/tags' }, A ? 'All tags and new tags' : 'All tags')),
+      h('div.chips', used.slice(0, 18).map(([t]) => h('a.chip', { href: '#/tag/' + t.id, css: { '--c': tagColor(t) } }, t.name))));
+  } else if (A) home.append(h('div.section-h', h('h2', 'Tags'), h('a.small', { href: '#/tags' }, 'New tag')));
   v.append(w);
 }
 
@@ -1973,7 +1828,6 @@ function viewUniverse(v, id) {
     h('div.menu-list',
       all.length > 1 ? h('button', { type: 'button', 'aria-label': 'Arrange the timeline', on: { click: () => { closeSheet(); S.arranging = true; S.sel.clear(); render(); } } }, icon('arrange'), 'Arrange the timeline') : null,
       h('button', { type: 'button', on: { click: () => addFlow({ u, at: null }) } }, icon('plus'), 'Add stories here'),
-      h('button', { type: 'button', on: { click: () => { closeSheet(); summariseMany(all.filter(s => !s.summary || s.summaryStale).map(s => s.id)); } } }, `Summarise the ${all.filter(s => !s.summary || s.summaryStale).length} without a summary`),
       all.some(s => s.source?.driveId) ? h('button', { type: 'button', on: { click: () => { closeSheet(); refreshFromDrive(all.map(s => s.id)); } } }, 'Check Google Drive for changes') : null,
       uni ? h('button', { type: 'button', on: { click: async () => { const n = await ask({ title: 'Rename universe', input: { value: uni.name }, ok: 'Rename' }); if (n) { await saveUniverse({ ...uni, name: n }); render(); } } } }, 'Rename') : null,
       uni ? h('button', { type: 'button', on: { click: () => { closeSheet(); pickIcon(uni); } } }, uni.icon ? 'Change icon…' : 'Icon…') : null,
@@ -2096,7 +1950,6 @@ function drawBulk() {
         },
       },
     }, 'Era…'),
-    h('button.btn.small', { type: 'button', disabled: !n, on: { click: () => summariseMany(ids()) } }, 'Summarise'),
     h('button.btn.small.danger', {
       type: 'button', disabled: !n, on: {
         click: async () => {
@@ -2159,26 +2012,27 @@ function wireDrag(list, u) {
   list.addEventListener('pointercancel', end);
 }
 
-function viewSearch(v) {
-  setBar('Search');
-  const w = h('div.wrap');
-  const input = h('input.field', { type: 'search', value: S.searchQ, placeholder: 'Search titles, tags, summaries and text', 'aria-label': 'Search', enterkeyhint: 'search' });
+// The search box at the top of the home screen. While there is a query, the results replace `home`.
+function searchUI(w, home) {
+  const input = h('input.field.search', { type: 'search', value: S.searchQ, placeholder: 'Search stories', 'aria-label': 'Search stories', enterkeyhint: 'search' });
   const results = h('div.list');
-  const aiBtn = h('button.btn.small', { type: 'button', hidden: !isAdmin() || !pref.get('aiKey', '') }, icon('sparkle'), 'Ask Claude');
   const quick = h('div.filters',
     [['is:unread', 'Unread'], ['is:reading', 'Reading'], ['is:fav', 'Favourites'], ...(isAdmin() ? [['no:summary', 'No summary'], ['no:tags', 'No tags']] : []), ['words:<3000', 'Under 3k words']].map(([q, label]) =>
       h('button.chip.plain' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, label)),
     universesSorted().map(u => { const q = `in:"${u.name}"`; return h('button.chip' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, css: { '--c': u.color }, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, u.name); }));
   const hint = h('p.hint', 'Try ', ...['tag:angst', 'in:"Star Wars"', 'character:anna', 'era:"year 2"', '-tag:wip', 'words:1k-5k', '"exact phrase"'].flatMap((x, k) => [k ? ' ' : '', h('code', x)]), '. Typos in titles and tags are forgiven.');
-  w.append(h('div.search-box', input, h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' } }, aiBtn)), quick, results);
-  v.append(w);
+  const searching = h('div.searching', quick, results);
+  w.append(h('div.search-box', input), searching);
+  const show = () => { const on = !!input.value.trim() || document.activeElement === input; searching.hidden = !on; home.hidden = !!input.value.trim(); };
+  input.addEventListener('focus', show);
+  input.addEventListener('blur', () => setTimeout(show, 150));
   const run = async () => {
     S.searchQ = input.value;
-    S.ai = null;
     if (!S.allTexts) { results.replaceChildren(h('p.muted.small', 'Indexing your library…')); await loadAllTexts(); }
     quick.querySelectorAll('button').forEach(b => b.classList.toggle('on', input.value.includes(b.dataset.q)));
     const q = input.value.trim();
-    if (!q) { put(results, hint, S.stories.size ? null : h('p.muted', 'Your library is empty.')); return; }
+    show();
+    if (!q) { put(results, hint); return; }
     const r = search(q);
     results.replaceChildren(h('p.muted.small', { style: { margin: '0 0 4px' } }, `${r.length} result${r.length === 1 ? '' : 's'}`),
       ...r.slice(0, 200).map(({ s, terms }) => {
@@ -2189,25 +2043,13 @@ function viewSearch(v) {
       }));
   };
   input.addEventListener('input', debounce(run, 160));
-  aiBtn.addEventListener('click', async () => {
-    const q = input.value.trim();
-    if (!q) return toast('Type a question first, such as "the one where they get snowed in".');
-    aiBtn.disabled = true;
-    results.replaceChildren(h('p.muted.small', 'Asking Claude…'));
-    try {
-      const r = await aiSearch(q);
-      const found = r.ids.map(id => S.stories.get(id)).filter(Boolean);
-      results.replaceChildren(h('div.ai-note', r.note), ...found.map(s => storyRow(s, { showU: true })));
-    } catch (e) { results.replaceChildren(h('p.small', { style: { color: 'var(--danger)' } }, aiError(e))); }
-    aiBtn.disabled = false;
-  });
   run();
-  if (!S.searchQ) setTimeout(() => input.focus(), 50);
+  if (S.focusSearch) { S.focusSearch = false; setTimeout(() => input.focus(), 50); }
 }
 
 function viewTags(v) {
   const A = isAdmin();
-  setBar('Tags');
+  setBar('Tags', { back: true });
   const w = h('div.wrap');
   if (A && S.tags.size) w.append(h('div.btn-row', { style: { marginBottom: '16px' } }, h('button.btn.primary', { type: 'button', on: { click: () => newTagFlow() } }, '+ New tag')));
   if (!S.tags.size) {
@@ -2295,7 +2137,7 @@ function viewTag(v, id) {
 }
 
 function viewSettings(v) {
-  setBar('Settings');
+  setBar('Settings', { back: true });
   const w = h('div.wrap');
   const A = isAdmin();
   if (A) {
@@ -2324,41 +2166,10 @@ function viewSettings(v) {
       [...S.stories.values()].some(s => s.source?.driveId) ? h('button.btn.small', { type: 'button', on: { click: () => refreshFromDrive([...S.stories.values()].map(s => s.id)) } }, 'Check all for changes') : null,
       signed ? h('button.btn.small', { type: 'button', on: { click: () => { signOut(); render(); } } }, 'Sign out') : null)));
 
-  const key = h('input.field', { type: 'password', value: pref.get('aiKey', ''), placeholder: 'sk-ant-…', autocomplete: 'off', spellcheck: false });
-  const model = h('select.field', MODELS.map(([id, label]) => h('option', { value: id }, label)));
-  model.value = pref.get('aiModel', MODELS[0][0]);
-  const spoil = h('select.field', h('option', { value: 'light' }, 'No spoilers: leave out the ending'), h('option', { value: 'full' }, 'Full: include the ending'));
-  spoil.value = pref.get('aiSpoilers', 'light');
-  key.addEventListener('change', () => { pref.set('aiKey', key.value.trim()); render(); });
-  model.addEventListener('change', () => pref.set('aiModel', model.value));
-  spoil.addEventListener('change', () => pref.set('aiSpoilers', spoil.value));
-  const missing = [...S.stories.values()].filter(s => !s.summary || s.summaryStale);
-  if (A) w.append(h('section.panel',
-    h('h2', 'Claude summaries'),
-    h('p', 'Claude writes a short summary of each story and suggests tags, and can search your library by meaning. It needs your own API key from console.anthropic.com. The key is kept on this device only, and use is billed to your Anthropic account.'),
-    h('label', 'API key'), key,
-    h('label', 'Model'), model,
-    h('label', 'Summaries'), spoil,
-    h('div.btn-row', { style: { marginTop: '14px' } },
-      h('button.btn.small', { type: 'button', disabled: !pref.get('aiKey', '') || !missing.length, on: { click: () => summariseMany(missing.map(s => s.id)) } }, `Summarise the ${missing.length} without one`))));
-
   const tapReads = h('input', { type: 'checkbox', checked: pref.get('tapReads', false), on: { change: e => pref.set('tapReads', e.target.checked) } });
-  const theme = h('select.field', h('option', { value: '' }, 'Match the device'), h('option', { value: 'light' }, 'Light'), h('option', { value: 'dark' }, 'Dark'));
-  theme.value = pref.get('theme', '');
-  theme.addEventListener('change', () => { pref.set('theme', theme.value); applyTheme(); });
   w.append(h('section.panel',
     h('h2', 'Reading'),
-    h('label.check', tapReads, 'Tapping a story opens it to read (details stay under ⓘ in the reader)'),
-    h('label', 'App colours'), theme));
-
-  const usage = h('span');
-  navigator.storage?.estimate?.().then(e => { usage.textContent = ` Using ${(e.usage / 1048576).toFixed(1)} MB on this device.`; });
-  if (A) w.append(h('section.panel',
-    h('h2', 'Working copy'),
-    h('p', `${S.stories.size} stories, ${S.universes.size} universes, ${S.tags.size} tags on this device.`, usage),
-    h('div.btn-row',
-      h('button.btn.small', { type: 'button', on: { click: downloadBackup } }, 'Download a backup'),
-      h('button.btn.small', { type: 'button', on: { click: () => $('#backupPick').click() } }, 'Restore a backup'))));
+    h('label.check', tapReads, 'Tapping a story opens it to read (details stay under ⓘ in the reader)')));
 
   const ver = h('span', '…');
   navigator.serviceWorker?.controller?.postMessage('version');
@@ -2369,42 +2180,13 @@ function viewSettings(v) {
   v.append(w);
 }
 
-/* ───────────── backup ───────────── */
-
-async function downloadBackup() {
-  const data = { app: 'callisto', v: 1, at: new Date().toISOString(), universes: await dbAll('universes'), tags: await dbAll('tags'), stories: await dbAll('stories'), texts: await dbAll('texts') };
-  const blob = await new Response(new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
-  const a = h('a', { href: URL.createObjectURL(blob), download: `Callisto backup ${new Date().toISOString().slice(0, 10)}.json.gz` });
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-}
-$('#backupPick').addEventListener('change', async e => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
-  let data;
-  try {
-    const head = new Uint8Array(await f.slice(0, 2).arrayBuffer());
-    const text = head[0] === 0x1f && head[1] === 0x8b ? await new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text() : await f.text();
-    data = JSON.parse(text);
-    if (data.app !== 'callisto') throw new Error();
-  } catch { return toast('That is not a Callisto backup.'); }
-  if (!await ask({ title: 'Restore this backup?', text: `It has ${data.stories.length} stories from ${fmtDate(data.at)}. It replaces everything in Callisto on this device.`, ok: 'Replace and restore', danger: true })) return;
-  for (const s of STORES) if (s !== 'kv') await dbClear(s);
-  await Promise.all([dbPut('universes', data.universes), dbPut('tags', data.tags), dbPut('stories', data.stories), dbPut('texts', data.texts)]);
-  S.texts.clear(); S.allTexts = false;
-  await loadAll();
-  toast('Backup restored.');
-  go('#/');
-});
-
 /* ───────────── router ───────────── */
 
 function parseRoute() {
   const p = location.hash.replace(/^#\/?/, '').split('/');
   switch (p[0]) {
     case 'u': return { name: 'universe', id: p[1] || '_' };
-    case 'search': return { name: 'search' };
+    case 'search': S.focusSearch = true; return { name: 'library' };
     case 'tags': return { name: 'tags' };
     case 'tag': return { name: 'tag', id: p[1] };
     case 'settings': return { name: 'settings' };
@@ -2420,12 +2202,9 @@ function render() {
   const r = S.route;
   if (r.name === 'library') viewLibrary(v);
   else if (r.name === 'universe') viewUniverse(v, r.id);
-  else if (r.name === 'search') viewSearch(v);
   else if (r.name === 'tags') viewTags(v);
   else if (r.name === 'tag') viewTag(v, r.id);
   else if (r.name === 'settings') viewSettings(v);
-  const tab = { library: 'library', universe: 'library', search: 'search', tags: 'tags', tag: 'tags', settings: 'settings' }[r.name];
-  document.querySelectorAll('.tabs a').forEach(a => { a.classList.toggle('on', a.dataset.tab === tab); a.toggleAttribute('aria-current', a.dataset.tab === tab); });
   v.scrollTop = y;
   S.lastView = { name: r.name, id: r.id };
 }
@@ -2446,13 +2225,7 @@ function route() {
 }
 window.addEventListener('hashchange', () => { S.cameFromApp = true; route(); });
 $('#backBtn').append(icon('back'));
-$('#backBtn').addEventListener('click', () => { if (S.cameFromApp) history.back(); else location.hash = S.route.name === 'tag' ? '#/tags' : '#/'; });
-document.querySelectorAll('.tabs .ico').forEach(s => { s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[s.dataset.icon]}</svg>`; });
-
-function applyTheme() {
-  const t = pref.get('theme', '');
-  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
-}
+$('#backBtn').addEventListener('click', () => { if (S.cameFromApp) history.back(); else location.hash = '#/'; });
 
 /* ───────────── updates (service worker) ───────────── */
 
@@ -2466,7 +2239,6 @@ async function checkUpdate() {
 /* ───────────── start ───────────── */
 
 (async function start() {
-  applyTheme();
   const after = signInReturn();
   try { if (isAdmin()) await loadAll(); else await loadPublished(); }
   catch (e) { document.body.replaceChildren(h('p', { style: { padding: '20px' } }, 'Callisto could not open its storage: ' + e.message)); return; }
