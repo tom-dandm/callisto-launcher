@@ -1733,8 +1733,9 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && !$(
 
 /* ───────────── views ───────────── */
 
-function setBar(title, { back = false, actions = [] } = {}) {
+function setBar(title, { back = false, actions = [], home = false } = {}) {
   $('#barTitle').textContent = title;
+  $('.app').classList.toggle('home-bar', home);
   const bb = $('#backBtn');
   bb.hidden = !back;
   // Manager: one small Publish button in the bar when there is something to publish.
@@ -1767,7 +1768,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
 
 function viewLibrary(v) {
   const A = isAdmin();
-  setBar('', { actions: [A ? iconBtn('plus', 'Add stories', () => addFlow()) : null, iconBtn('gear', 'Settings', () => go('#/settings'))] });
+  setBar('Callisto', { home: true, actions: [A ? iconBtn('plus', 'Add stories', () => addFlow()) : null, iconBtn('gear', 'Settings', () => go('#/settings'))] });
   if (!A && !S.stories.size) {
     v.append(h('div.wrap.empty',
       h('h2', S.loadError ? 'Could not load the library' : 'Nothing to read yet'),
@@ -1786,7 +1787,7 @@ function viewLibrary(v) {
   }
   const w = h('div.wrap');
   const home = h('div.home');
-  w.prepend(h('header.title-page', h('h1', 'Callisto'), h('p', 'Stories of Frey and Jun'), h('span.orn', { 'aria-hidden': 'true' }, '❦')));
+  w.prepend(h('header.title-page', h('p', 'Stories of Frey and Jun'), h('span.orn', { 'aria-hidden': 'true' }, '❦')));
   searchUI(w, home);
   w.append(home);
   const count = n => `${n} stor${n === 1 ? 'y' : 'ies'}`;
