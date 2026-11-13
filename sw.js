@@ -1,4 +1,4 @@
-const CACHE = 'callisto-shell-17';
+const CACHE = 'callisto-shell-18';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
@@ -13,7 +13,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('message', e => { if (e.data === 'version') e.source.postMessage({ version: CACHE }); });
 
-// Cache first, refreshed in the background: the app opens offline and picks up a new version next time.
+// Cache first, refreshed in the background: the app opens offline. A new sw.js (new CACHE name) installs, takes over, and the app reloads itself (applyUpdate in app.js).
 self.addEventListener('fetch', e => {
   const req = e.request;
   const url = new URL(req.url);

@@ -242,6 +242,7 @@ function refreshPublished(first) {
 // Quietly, at most every few minutes, and never in the way of reading offline.
 function backgroundChecks() {
   if (!navigator.onLine || document.hidden) return;
+  if (Date.now() - pref.get('appCheckedAt', 0) > 30 * 60000) checkUpdate(true);
   if (!isAdmin()) {
     if (Date.now() - pref.get('checkedAt', 0) > 5 * 60000) refreshPublished();
     return;
@@ -2175,7 +2176,7 @@ function viewSettings(v) {
   navigator.serviceWorker?.controller?.postMessage('version');
   S.onVersion = x => { ver.textContent = x; };
   w.append(h('section.panel', h('h2', 'Callisto'), h('p', 'Version ', ver, '. Works offline once opened.'),
-    h('div.btn-row', h('button.btn.small', { type: 'button', on: { click: checkUpdate } }, 'Check for updates'))));
+    h('div.btn-row', h('button.btn.small', { type: 'button', on: { click: () => checkUpdate() } }, 'Check for updates'))));
   if (!A) w.append(h('section.panel', h('h2', 'Manage the library'), h('p', 'Only for the person who runs this library.'), h('div.btn-row', h('button.btn.small', { type: 'button', on: { click: managerFlow } }, 'Manager sign-in'))));
   v.append(w);
 }
@@ -2229,11 +2230,23 @@ $('#backBtn').addEventListener('click', () => { if (S.cameFromApp) history.back(
 
 /* ───────────── updates (service worker) ───────────── */
 
-async function checkUpdate() {
+// New app versions install themselves (sw.js skips waiting). When one takes over, the page
+// reloads: straight away if it is the first seconds after opening and nothing is open,
+// otherwise the next time the app is hidden (reading position is saved on hide).
+const startedAt = Date.now();
+let newApp = false;
+function applyUpdate() {
+  if (!newApp) return;
+  const idle = $('#reader').hidden && !sheetOpen && !(document.activeElement?.value);
+  if (document.hidden || (idle && !isAdmin() && Date.now() - startedAt < 15000)) location.reload();
+}
+document.addEventListener('visibilitychange', applyUpdate);
+async function checkUpdate(quiet) {
   const reg = await navigator.serviceWorker?.getRegistration();
-  if (!reg) return toast('Updates need the app to be served over https.');
-  await reg.update();
-  toast('Checking… If a new version is found, it loads next time you open Callisto.', { label: 'Reload now', run: () => location.reload() });
+  if (!reg) return quiet || toast('Updates need the app to be served over https.');
+  pref.set('appCheckedAt', Date.now());
+  await reg.update().catch(() => {});
+  if (!quiet) toast(reg.installing || reg.waiting ? 'A new version is loading.' : 'Callisto is up to date.');
 }
 
 /* ───────────── start ───────────── */
@@ -2250,6 +2263,8 @@ async function checkUpdate() {
   else if (after === 'publish' && isAdmin()) publish();
   else if (after === 'settings' || after === 'signed-in') toast('Signed in to Google.');
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) { newApp = true; applyUpdate(); } });
     navigator.serviceWorker.register('sw.js').catch(() => {});
     navigator.serviceWorker.addEventListener('message', e => { if (e.data?.version) S.onVersion?.(e.data.version.replace('callisto-shell-', 'v')); });
   }
