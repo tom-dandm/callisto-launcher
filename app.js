@@ -1785,7 +1785,7 @@ function viewLibrary(v) {
   }
   const w = h('div.wrap');
   const home = h('div.home');
-  w.prepend(h('header.title-page', h('h1', 'Callisto'), h('p', 'A library of stories'), h('span.orn', { 'aria-hidden': 'true' }, '❦')));
+  w.prepend(h('header.title-page', h('h1', 'Callisto'), h('p', 'Stories of Frey and Jun'), h('span.orn', { 'aria-hidden': 'true' }, '❦')));
   searchUI(w, home);
   w.append(home);
   const count = n => `${n} stor${n === 1 ? 'y' : 'ies'}`;
