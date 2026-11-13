@@ -1,0 +1,2410 @@
+'use strict';
+
+/* ───────────── constants ───────────── */
+
+const CLIENT_ID = '257581565054-a3i5pvi1akkcq2s9i7rt4jp140pdh7rm.apps.googleusercontent.com';
+const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const DRIVE = 'https://www.googleapis.com/drive/v3';
+const GDOC = 'application/vnd.google-apps.document';
+const GFOLDER = 'application/vnd.google-apps.folder';
+const GSHORTCUT = 'application/vnd.google-apps.shortcut';
+const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm';
+const MODELS = [
+  ['claude-opus-5-5', 'Claude Opus 5.5 (best)'],
+  ['claude-sonnet-5-5', 'Claude Sonnet 5.5'],
+  ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)'],
+];
+const KINDS = {
+  [GDOC]: 'gdoc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'text/plain': 'txt', 'text/markdown': 'md', 'text/x-markdown': 'md', 'text/html': 'html',
+  'application/rtf': 'rtf', 'text/rtf': 'rtf', 'application/epub+zip': 'epub',
+};
+const EXT_KIND = { txt: 'txt', text: 'txt', md: 'md', markdown: 'md', html: 'html', htm: 'html', xhtml: 'html', docx: 'docx', odt: 'odt', rtf: 'rtf', epub: 'epub' };
+const PALETTE = ['#7a4fd0', '#d6457a', '#d9822b', '#3d7fd6', '#2fa39a', '#5f9e3a', '#c0392b', '#8a6d3b', '#5b6ee1', '#b0479a', '#1f8a70', '#6d6875'];
+const GROUP_COLORS = { character: '#d9822b', pairing: '#d6457a', relationship: '#d6457a', genre: '#3d7fd6', trope: '#7a4fd0', mood: '#2fa39a', warning: '#c0392b', fandom: '#5b6ee1', status: '#5f9e3a', rating: '#8a6d3b' };
+const DEFAULT_GROUPS = ['Character', 'Pairing', 'Genre', 'Trope', 'Mood', 'Warning', 'Other'];
+const SCENE_BREAK = /^\s*([*~#=•·_\-+o0xX]\s*){3,}\s*$|^\s*(⁂|§|❧|\* \* \*)\s*$/;
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/* ───────────── small helpers ───────────── */
+
+const $ = s => document.querySelector(s);
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const wordsIn = s => (s.match(/\S+/g) || []).length;
+const fmtWords = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k words' : n + ' words';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const lc = s => (s || '').toLowerCase();
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+function hashColor(s, list = PALETTE) { let n = 0; for (const c of s) n = (n * 31 + c.charCodeAt(0)) >>> 0; return list[n % list.length]; }
+function fmtDate(t) { return t ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : ''; }
+
+function h(sel, props, ...kids) {
+  if (props == null || typeof props !== 'object' || props instanceof Node || Array.isArray(props)) { kids.unshift(props); props = {}; }
+  const [, tag = 'div', rest = ''] = sel.match(/^([a-z0-9-]*)(.*)$/i);
+  const el = document.createElement(tag || 'div');
+  for (const part of rest.match(/[.#][^.#]+/g) || []) part[0] === '.' ? el.classList.add(part.slice(1)) : (el.id = part.slice(1));
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'on') for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
+    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'css') for (const [p, val] of Object.entries(v)) el.style.setProperty(p, val);
+    else if (k in el && typeof v !== 'string') el[k] = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  const add = k => { if (k == null || k === false) return; if (Array.isArray(k)) return k.forEach(add); el.append(k instanceof Node ? k : String(k)); };
+  kids.forEach(add);
+  return el;
+}
+
+const ICONS = {
+  library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16.5 4.5l3.8 1-3.9 15-3.8-1z"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+  tag: '<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2l-6.2 6.2a1.4 1.4 0 0 1-2 0z"/><circle cx="8" cy="8" r="1.4"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  arrange: '<path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3"/>',
+  handle: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="3"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>',
+  folder: '<path d="M3.5 6.5a1 1 0 0 1 1-1h4.6l2 2h8.4a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/>',
+  doc: '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/>',
+};
+// replaceChildren that skips null/false and flattens arrays, like h() does for its children.
+function put(el, ...kids) { el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false)); return el; }
+function icon(name) { const s = h('span.ico'); s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`; return s; }
+function iconBtn(name, label, onclick, extra = {}) { const b = h('button.icon-btn', { type: 'button', 'aria-label': label, title: label, on: { click: onclick }, ...extra }); b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`; return b; }
+
+const pref = {
+  get(k, d) { try { const v = localStorage.getItem('cal.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('cal.' + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem('cal.' + k); } catch {} },
+};
+
+// Reading progress is per viewer and never published: { [storyId]: { status, readPos, lastRead, fav } }.
+const P = { all: pref.get('progress', {}) };
+const prog = id => ({ status: 'unread', readPos: 0, lastRead: 0, fav: false, ...P.all[id] });
+function setProg(id, patch) { P.all[id] = { ...prog(id), ...patch }; pref.set('progress', P.all); }
+
+/* ───────────── toast ───────────── */
+
+let toastTimer;
+function toast(msg, action, ms = 3800) {
+  const t = $('#toast');
+  t.replaceChildren(h('span', msg));
+  if (action) t.append(h('button', { type: 'button', on: { click: () => { t.hidden = true; action.run(); } } }, action.label));
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+/* ───────────── storage (IndexedDB) ───────────── */
+
+const STORES = ['stories', 'texts', 'universes', 'tags', 'kv'];
+let dbp;
+function db() {
+  return dbp ||= new Promise((res, rej) => {
+    const r = indexedDB.open('callisto', 1);
+    r.onupgradeneeded = () => { for (const s of STORES) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s, { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function tx(store, mode, fn) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction(store, mode);
+    const out = fn(t.objectStore(store));
+    t.oncomplete = () => res(out && 'result' in out ? out.result : out);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error || new Error('Storage write was refused.'));
+  });
+}
+const dbAll = store => tx(store, 'readonly', s => s.getAll());
+const dbGet = (store, id) => tx(store, 'readonly', s => s.get(id));
+// Any change to the library in manager mode means there is something to publish.
+const touch = store => { if (store !== 'kv' && isAdmin() && !S.quiet) pref.set('dirtyAt', Date.now()); };
+const dbPut = (store, items) => { touch(store); return tx(store, 'readwrite', s => { for (const i of [].concat(items)) s.put(i); }); };
+const dbDel = (store, ids) => { touch(store); return tx(store, 'readwrite', s => { for (const i of [].concat(ids)) s.delete(i); }); };
+const dbClear = store => { touch(store); return tx(store, 'readwrite', s => s.clear()); };
+
+/* ───────────── state ───────────── */
+
+const S = {
+  stories: new Map(), universes: new Map(), tags: new Map(), texts: new Map(),
+  allTexts: false, route: { name: 'library' }, arranging: false, sel: new Set(),
+  filter: { tags: new Set(), unread: false }, searchQ: '', ai: null,
+};
+
+async function loadAll() {
+  const [st, un, tg] = await Promise.all([dbAll('stories'), dbAll('universes'), dbAll('tags')]);
+  S.stories = new Map(st.map(x => [x.id, x]));
+  S.universes = new Map(un.map(x => [x.id, x]));
+  S.tags = new Map(tg.map(x => [x.id, x]));
+}
+
+const universesSorted = () => [...S.universes.values()].sort((a, b) => a.order - b.order || collator.compare(a.name, b.name));
+const storiesIn = u => [...S.stories.values()].filter(s => (s.universeId || '') === (u || '')).sort((a, b) => a.pos - b.pos || a.addedAt - b.addedAt);
+const uName = u => (u && S.universes.get(u)?.name) || 'Unsorted';
+const uColor = u => (u && S.universes.get(u)?.color) || 'var(--ink-2)';
+const tagColor = t => t.color || GROUP_COLORS[lc(t.group)] || hashColor(t.group || t.name);
+const tagsSorted = () => [...S.tags.values()].sort((a, b) => collator.compare(a.group || '', b.group || '') || collator.compare(a.name, b.name));
+const tagUse = id => { let n = 0; for (const s of S.stories.values()) if (s.tags.includes(id)) n++; return n; };
+const groups = () => [...new Set([...DEFAULT_GROUPS, ...[...S.tags.values()].map(t => t.group).filter(Boolean)])];
+
+async function saveStories(list) { list = [].concat(list); list.forEach(s => S.stories.set(s.id, s)); await dbPut('stories', list); }
+async function saveUniverse(u) { S.universes.set(u.id, u); await dbPut('universes', u); }
+async function saveTag(t) { S.tags.set(t.id, t); await dbPut('tags', t); }
+
+async function getText(id) {
+  if (S.texts.has(id)) return S.texts.get(id);
+  if (!isAdmin()) { await loadAllTexts(); return S.texts.get(id); }
+  const t = await dbGet('texts', id);
+  if (t) S.texts.set(id, t);
+  return t;
+}
+// Manager: every text from the device. Reader: the published texts file, fetched once.
+async function loadAllTexts() {
+  if (S.allTexts) return;
+  if (isAdmin()) { for (const t of await dbAll('texts')) S.texts.set(t.id, t); S.allTexts = true; return; }
+  S.textsLoading ||= (async () => {
+    const r = await fetch(DATA + 'texts.json?v=' + encodeURIComponent(S.published || ''), { cache: 'no-cache' });
+    if (!r.ok) throw new Error('Could not load the stories (' + r.status + ').');
+    for (const [id, html] of Object.entries(await r.json())) S.texts.set(id, { id, html, plain: plainOf(html) });
+    S.allTexts = true;
+  })().finally(() => { S.textsLoading = null; });
+  return S.textsLoading;
+}
+
+/* ───────────── manager mode and publishing ───────────── */
+
+// Readers see the library published to the site (data/library.json and data/texts.json).
+// Laura's manager mode keeps a working copy on her device and publishes it to the site's GitHub repo.
+const DATA = 'data/';
+const REPO_DEFAULT = 'tom-dandm/callisto-launcher';
+function isAdmin() { return pref.get('admin', false) && !!pref.get('ghToken', ''); }
+const repo = () => pref.get('ghRepo', REPO_DEFAULT);
+
+function setLibrary(lib) {
+  S.stories = new Map((lib?.stories || []).map(x => [x.id, x]));
+  S.universes = new Map((lib?.universes || []).map(x => [x.id, x]));
+  S.tags = new Map((lib?.tags || []).map(x => [x.id, x]));
+  S.texts.clear(); S.allTexts = false;
+  S.published = lib?.publishedAt || '';
+}
+async function loadPublished() {
+  S.loadError = '';
+  try {
+    const r = await fetch(DATA + 'library.json', { cache: 'no-cache' });
+    if (r.status === 404) return setLibrary(null);
+    if (!r.ok) throw new Error('The library could not be loaded (' + r.status + ').');
+    setLibrary(await r.json());
+    loadAllTexts().catch(() => {});
+  } catch (e) {
+    setLibrary(null);
+    S.loadError = /fetch/i.test(e.message) ? 'The library could not be loaded. Are you online?' : e.message;
+  }
+}
+
+async function gh(method, path, body, raw) {
+  const r = await fetch('https://api.github.com' + path, {
+    method,
+    headers: {
+      Authorization: 'Bearer ' + pref.get('ghToken', ''), 'X-GitHub-Api-Version': '2022-11-28',
+      Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
+      ...(body && { 'Content-Type': 'application/json' }),
+    },
+    body: body && JSON.stringify(body),
+  }).catch(() => { throw new Error('Could not reach GitHub. Are you online?'); });
+  if (raw && r.status === 404) return null;
+  if (!r.ok) {
+    let m = r.statusText; try { m = (await r.json()).message; } catch {}
+    const msg = r.status === 401 ? 'GitHub did not accept the token.'
+      : r.status === 403 ? 'This token is not allowed to change the site. It needs Contents: Read and write on the repo.'
+        : r.status === 404 ? 'The repo was not found, or the token cannot see it.' : `GitHub: ${m}`;
+    throw Object.assign(new Error(msg), { status: r.status });
+  }
+  return raw ? r.text() : r.json();
+}
+
+// Reads the published library straight from the repo (fresher than the site, which lags a minute).
+async function remoteLibrary() {
+  const t = await gh('GET', `/repos/${repo()}/contents/${DATA}library.json`, null, true);
+  return t ? JSON.parse(t) : null;
+}
+
+// Replaces the working copy on this device with what is published.
+async function pullPublished() {
+  const lib = await remoteLibrary();
+  const texts = lib ? JSON.parse(await gh('GET', `/repos/${repo()}/contents/${DATA}texts.json`, null, true) || '{}') : {};
+  S.quiet = true;
+  try {
+    for (const st of STORES) if (st !== 'kv') await dbClear(st);
+    if (lib) {
+      await dbPut('universes', lib.universes); await dbPut('tags', lib.tags); await dbPut('stories', lib.stories);
+      await dbPut('texts', Object.entries(texts).map(([id, html]) => ({ id, html, plain: plainOf(html) })));
+    }
+  } finally { S.quiet = false; }
+  S.texts.clear(); S.allTexts = false;
+  await loadAll();
+  pref.set('pubBase', lib?.publishedAt || '');
+  pref.del('dirtyAt');
+  return lib;
+}
+
+let publishing = false;
+async function publish() {
+  if (publishing) return;
+  publishing = true;
+  try {
+    toast('Publishing…', null, 0);
+    const r = repo();
+    const remote = await remoteLibrary();
+    if (remote && remote.publishedAt !== pref.get('pubBase', '')) {
+      $('#toast').hidden = true;
+      const ok = await ask({
+        title: 'Published from somewhere else',
+        text: `The library on the site was published on ${new Date(remote.publishedAt).toLocaleString()}, after this device last loaded it. Publishing now replaces that version with this one.`,
+        ok: 'Publish this one', danger: true,
+      });
+      if (!ok) return;
+      toast('Publishing…', null, 0);
+    }
+    const publishedAt = new Date().toISOString();
+    const lib = { app: 'callisto', v: 1, publishedAt, universes: universesSorted(), tags: tagsSorted(), stories: [...S.stories.values()] };
+    const texts = Object.fromEntries((await dbAll('texts')).filter(t => S.stories.has(t.id)).map(t => [t.id, t.html]));
+    const branch = (await gh('GET', `/repos/${r}`)).default_branch;
+    const ref = await gh('GET', `/repos/${r}/git/ref/heads/${branch}`);
+    const head = await gh('GET', `/repos/${r}/git/commits/${ref.object.sha}`);
+    const blob = async content => (await gh('POST', `/repos/${r}/git/blobs`, { content, encoding: 'utf-8' })).sha;
+    const [a, b] = await Promise.all([blob(JSON.stringify(lib)), blob(JSON.stringify(texts))]);
+    const tree = await gh('POST', `/repos/${r}/git/trees`, {
+      base_tree: head.tree.sha,
+      tree: [
+        { path: DATA + 'library.json', mode: '100644', type: 'blob', sha: a },
+        { path: DATA + 'texts.json', mode: '100644', type: 'blob', sha: b },
+      ],
+    });
+    const commit = await gh('POST', `/repos/${r}/git/commits`, { message: `Library: ${lib.stories.length} stories`, tree: tree.sha, parents: [head.sha] });
+    await gh('PATCH', `/repos/${r}/git/refs/heads/${branch}`, { sha: commit.sha });
+    pref.set('pubBase', publishedAt);
+    pref.del('dirtyAt');
+    toast('Published. Readers see it within a minute or two.', null, 6000);
+    render();
+  } catch (e) {
+    toast('Not published: ' + e.message, null, 8000);
+  } finally { publishing = false; }
+}
+
+function publishStrip() {
+  return h('div.pub', h('span', 'Changes not published yet'), h('button.btn.small.primary', { type: 'button', on: { click: publish } }, 'Publish'));
+}
+
+// Turning manager mode on: check the token can write to the repo, then load the published library.
+function managerFlow() {
+  const repoIn = h('input.field', { type: 'text', value: repo(), spellcheck: false, autocomplete: 'off' });
+  const tok = h('input.field', { type: 'password', placeholder: 'github_pat_…', spellcheck: false, autocomplete: 'off', autofocus: true });
+  const err = h('p.small', { style: { color: 'var(--danger)' } });
+  const label = t => h('label.small.muted', { style: { display: 'block', margin: '12px 0 6px' } }, t);
+  openSheet([
+    h('h2', 'Manage the library'),
+    h('p.sub', 'For the person who runs this library. Readers never need this.'),
+    h('p.small', 'Make a GitHub token that can change only this site: on github.com go to Settings > Developer settings > Fine-grained tokens > Generate new token. Under Repository access pick "Only select repositories" and choose the repo below. Under Repository permissions set Contents to "Read and write". The token stays on this device.'),
+    label('Repo'), repoIn,
+    label('Token'), tok,
+    err,
+    h('div.foot',
+      h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
+      h('button.btn.primary', { type: 'button', on: { click: e => turnOnManager(e.currentTarget, repoIn.value, tok.value, err) } }, 'Turn on')),
+  ]);
+}
+async function turnOnManager(btn, repoName, token, err) {
+  btn.disabled = true; err.textContent = '';
+  const old = { t: pref.get('ghToken', ''), r: repo() };
+  pref.set('ghToken', token.trim());
+  pref.set('ghRepo', repoName.trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, ''));
+  try {
+    const info = await gh('GET', `/repos/${repo()}`);
+    if (!info.permissions?.push) throw new Error('This token can read the repo but not change it. Set Contents to "Read and write".');
+    pref.set('admin', true);
+    const hasLocal = (await dbAll('stories')).length > 0;
+    const keep = hasLocal && await ask({
+      title: 'This device already has a library',
+      text: 'Start from the published library (recommended), or keep the copy on this device and publish it over the site later?',
+      ok: "Keep this device's copy", cancel: 'Use the published one',
+    });
+    if (keep) await loadAll();
+    else { toast('Loading the published library…', null, 0); await pullPublished(); }
+    toast('Manager mode is on.');
+    closeSheet();
+    go('#/');
+    render();
+  } catch (x) {
+    pref.set('ghToken', old.t); pref.set('ghRepo', old.r); pref.set('admin', false);
+    err.textContent = x.message; btn.disabled = false;
+  }
+}
+async function leaveManager() {
+  const dirty = pref.get('dirtyAt', 0);
+  const ok = await ask({
+    title: 'Leave manager mode?',
+    text: (dirty ? 'There are changes on this device that are not published. They stay on this device, but readers will not see them.\n\n' : '') + 'The GitHub token is removed from this device. This device then shows the library as readers see it.',
+    ok: 'Leave manager mode', danger: !!dirty,
+  });
+  if (!ok) return;
+  pref.set('admin', false); pref.del('ghToken');
+  await loadPublished();
+  go('#/'); render();
+}
+
+async function newUniverse(name) {
+  const u = { id: uid(), name: name.trim(), color: PALETTE[S.universes.size % PALETTE.length], order: S.universes.size ? Math.max(...[...S.universes.values()].map(x => x.order)) + 1 : 0, createdAt: Date.now() };
+  await saveUniverse(u);
+  return u;
+}
+async function findOrMakeTag(name, group = 'Other') {
+  name = name.trim();
+  const hit = [...S.tags.values()].find(t => lc(t.name) === lc(name) && lc(t.group) === lc(group)) || [...S.tags.values()].find(t => lc(t.name) === lc(name));
+  if (hit) return hit;
+  const t = { id: uid(), name, group, createdAt: Date.now() };
+  await saveTag(t);
+  return t;
+}
+
+// Writes the order of one universe: ids in reading order.
+async function setOrder(u, ids) {
+  const list = ids.map((id, i) => ({ ...S.stories.get(id), universeId: u || '', pos: i }));
+  await saveStories(list);
+}
+// Moves stories into universe u at index (in the list without them).
+async function placeStories(ids, u, index) {
+  const moving = new Set(ids);
+  const rest = storiesIn(u).filter(s => !moving.has(s.id)).map(s => s.id);
+  const at = index == null ? rest.length : Math.max(0, Math.min(index, rest.length));
+  rest.splice(at, 0, ...ids);
+  await setOrder(u, rest);
+}
+
+async function deleteStories(ids) {
+  ids.forEach(id => { S.stories.delete(id); S.texts.delete(id); });
+  await Promise.all([dbDel('stories', ids), dbDel('texts', ids)]);
+}
+
+/* ───────────── zip, docx, odt, epub, rtf, text, html ───────────── */
+
+async function unzip(buf) {
+  const v = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) if (v.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('This file is not a valid document (no zip directory).');
+  const count = v.getUint16(eocd + 10, true);
+  let p = v.getUint32(eocd + 16, true);
+  const files = new Map(), dec = new TextDecoder();
+  for (let n = 0; n < count; n++) {
+    if (v.getUint32(p, true) !== 0x02014b50) break;
+    const method = v.getUint16(p + 10, true), csize = v.getUint32(p + 20, true);
+    const nl = v.getUint16(p + 28, true), xl = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true), off = v.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    files.set(name, { method, csize, off });
+    p += 46 + nl + xl + cl;
+  }
+  return {
+    names: [...files.keys()],
+    has: n => files.has(n),
+    async text(name) {
+      const f = files.get(name) || [...files].find(([k]) => lc(k) === lc(name))?.[1];
+      if (!f) return null;
+      const start = f.off + 30 + v.getUint16(f.off + 26, true) + v.getUint16(f.off + 28, true);
+      const raw = u8.subarray(start, start + f.csize);
+      if (f.method === 0) return dec.decode(raw);
+      if (f.method !== 8) throw new Error('Unsupported compression in this file.');
+      const ab = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      return dec.decode(ab);
+    },
+  };
+}
+const xml = s => new DOMParser().parseFromString(s, 'application/xml');
+const kids = (el, name) => [...el.children].filter(c => c.localName === name);
+const kid = (el, name) => el && [...el.children].find(c => c.localName === name);
+const onAttr = el => { if (!el) return false; const v = el.getAttribute('w:val'); return v == null || !/^(0|false|none)$/i.test(v); };
+
+function wrapFmt(t, f) {
+  if (!t) return '';
+  let s = esc(t);
+  if (f.u) s = `<u>${s}</u>`;
+  if (f.s) s = `<s>${s}</s>`;
+  if (f.i) s = `<em>${s}</em>`;
+  if (f.b) s = `<strong>${s}</strong>`;
+  return s;
+}
+function blockHtml(tag, inner) {
+  const text = inner.replace(/<[^>]+>/g, '').replace(/&nbsp;| /g, ' ').replace(/&amp;/g, '&').trim();
+  if (!text) return '';
+  if (/^(p|blockquote)$/.test(tag) && SCENE_BREAK.test(text)) return '<hr>';
+  inner = inner.replace(/^(\s|<br>)+|(\s|<br>)+$/g, '');
+  return tag === 'blockquote' ? `<blockquote><p>${inner}</p></blockquote>` : `<${tag}>${inner}</${tag}>`;
+}
+
+async function parseDocx(buf) {
+  const z = await unzip(buf);
+  const doc = xml(await z.text('word/document.xml') || '');
+  const body = doc.getElementsByTagNameNS('*', 'body')[0];
+  if (!body) throw new Error('Could not read the Word document.');
+  const out = [];
+  const runText = (r, f) => {
+    let s = '';
+    for (const c of r.children) {
+      if (c.localName === 't') s += wrapFmt(c.textContent, f);
+      else if (c.localName === 'tab') s += ' ';
+      else if (c.localName === 'br' && c.getAttribute('w:type') !== 'page') s += '<br>';
+      else if (c.localName === 'noBreakHyphen') s += '-';
+    }
+    return s;
+  };
+  const para = p => {
+    const ppr = kid(p, 'pPr');
+    const style = kid(ppr, 'pStyle')?.getAttribute('w:val') || '';
+    const m = style.match(/heading\s*(\d)|^title$/i);
+    const tag = m ? (m[1] ? 'h' + Math.min(3, Math.max(1, +m[1])) : 'h1') : 'p';
+    let inner = '';
+    const walk = el => {
+      for (const c of el.children) {
+        if (c.localName === 'r') {
+          const rpr = kid(c, 'rPr');
+          const u = kid(rpr, 'u');
+          inner += runText(c, { b: onAttr(kid(rpr, 'b')), i: onAttr(kid(rpr, 'i')), u: u && !/^none$/i.test(u.getAttribute('w:val') || ''), s: onAttr(kid(rpr, 'strike')) });
+        } else if (/^(hyperlink|ins|smartTag|sdt|sdtContent|fldSimple|customXml)$/.test(c.localName)) walk(c);
+      }
+    };
+    walk(p);
+    out.push(blockHtml(tag, inner));
+  };
+  const walkBody = el => {
+    for (const c of el.children) {
+      if (c.localName === 'p') para(c);
+      else if (/^(tbl|tr|tc|sdt|sdtContent|customXml)$/.test(c.localName)) walkBody(c);
+    }
+  };
+  walkBody(body);
+  let title = '';
+  try { title = xml(await z.text('docProps/core.xml') || '<x/>').getElementsByTagNameNS('*', 'title')[0]?.textContent || ''; } catch {}
+  return { html: out.filter(Boolean).join('\n'), docTitle: title };
+}
+
+async function parseOdt(buf) {
+  const z = await unzip(buf);
+  const doc = xml(await z.text('content.xml') || '');
+  const text = doc.getElementsByTagNameNS('*', 'text');
+  const root = [...text].find(e => e.parentElement?.localName === 'body');
+  if (!root) throw new Error('Could not read the OpenDocument file.');
+  const out = [];
+  const inline = el => {
+    let s = '';
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) s += esc(n.textContent);
+      else if (n.localName === 's') s += ' '.repeat(+n.getAttribute('text:c') || 1);
+      else if (n.localName === 'tab') s += ' ';
+      else if (n.localName === 'line-break') s += '<br>';
+      else if (/^(span|a)$/.test(n.localName)) s += inline(n);
+    }
+    return s;
+  };
+  const walk = el => {
+    for (const c of el.children) {
+      if (c.localName === 'h') out.push(blockHtml('h' + Math.min(3, +c.getAttribute('text:outline-level') || 2), inline(c)));
+      else if (c.localName === 'p') out.push(blockHtml('p', inline(c)));
+      else if (/^(list|list-item|section|table|table-row|table-cell)$/.test(c.localName)) walk(c);
+    }
+  };
+  walk(root);
+  return { html: out.filter(Boolean).join('\n') };
+}
+
+async function parseEpub(buf) {
+  const z = await unzip(buf);
+  const cont = xml(await z.text('META-INF/container.xml') || '');
+  const opfPath = cont.getElementsByTagNameNS('*', 'rootfile')[0]?.getAttribute('full-path');
+  if (!opfPath) throw new Error('Could not read the EPUB.');
+  const base = opfPath.includes('/') ? opfPath.replace(/[^/]+$/, '') : '';
+  const opf = xml(await z.text(opfPath));
+  const items = new Map([...opf.getElementsByTagNameNS('*', 'item')].map(i => [i.getAttribute('id'), i.getAttribute('href')]));
+  const title = opf.getElementsByTagNameNS('*', 'title')[0]?.textContent || '';
+  let all = '';
+  for (const ref of opf.getElementsByTagNameNS('*', 'itemref')) {
+    const href = items.get(ref.getAttribute('idref'));
+    if (!href) continue;
+    const path = (base + decodeURIComponent(href)).replace(/[^/]+\/\.\.\//g, '');
+    const t = await z.text(path);
+    if (t) all += `<section>${(t.match(/<body[^>]*>([\s\S]*)<\/body>/i) || [, t])[1]}</section>`;
+  }
+  const r = parseHtml(`<html><body>${all}</body></html>`);
+  return { ...r, docTitle: r.meta?.title || title };
+}
+
+// Drops RTF groups that hold no story text (font table, styles, pictures, headers, \* groups).
+function rtfStrip(s) {
+  const skip = /^\{\\(\*|(fonttbl|colortbl|stylesheet|info|listtable|listoverridetable|pict|header|footer|headerl|headerr|footerl|footerr|rsidtbl|generator|xmlnstbl|latentstyles|themedata|colorschememapping|datastore|pgdsctbl|filetbl|revtbl|object|fldinst)\b)/;
+  let out = '', i = 0;
+  while (i < s.length) {
+    if (s[i] === '\\' && i + 1 < s.length) { out += s[i] + s[i + 1]; i += 2; continue; }
+    if (s[i] === '{' && skip.test(s.slice(i, i + 40))) {
+      let depth = 0;
+      for (; i < s.length; i++) {
+        if (s[i] === '\\') { i++; continue; }
+        if (s[i] === '{') depth++;
+        else if (s[i] === '}' && --depth === 0) { i++; break; }
+      }
+      continue;
+    }
+    out += s[i++];
+  }
+  return out;
+}
+
+function parseRtf(s) {
+  const cp = new TextDecoder('windows-1252');
+  s = rtfStrip(s);
+  const paras = [];
+  let cur = '', depth = 0, f = { b: false, i: false, u: false };
+  const stack = [];
+  const re = /\\'([0-9a-f]{2})|\\u(-?\d+)\??|\\([a-z]+)(-?\d+)? ?|\\([\\{}~_-])|([{}])|\r?\n|([^\\{}\r\n]+)/gi;
+  let m;
+  while ((m = re.exec(s))) {
+    if (m[1]) cur += esc(cp.decode(new Uint8Array([parseInt(m[1], 16)])));
+    else if (m[2]) cur += esc(String.fromCharCode(+m[2] < 0 ? +m[2] + 65536 : +m[2]));
+    else if (m[3]) {
+      const w = m[3], n = m[4];
+      if (w === 'par' || w === 'sect') { paras.push(blockHtml('p', cur)); cur = ''; }
+      else if (w === 'line') cur += '<br>';
+      else if (w === 'tab') cur += ' ';
+      else if (w === 'emdash') cur += '—'; else if (w === 'endash') cur += '–';
+      else if (w === 'lquote') cur += '‘'; else if (w === 'rquote') cur += '’';
+      else if (w === 'ldblquote') cur += '“'; else if (w === 'rdblquote') cur += '”';
+      else if (w === 'b' || w === 'i' || w === 'ul' || w === 'ulnone') {
+        const on = n !== '0';
+        const k = w === 'ulnone' ? 'u' : w === 'ul' ? 'u' : w;
+        const val = w === 'ulnone' ? false : on;
+        if (f[k] !== val) { cur += val ? { b: '<strong>', i: '<em>', u: '<u>' }[k] : { b: '</strong>', i: '</em>', u: '</u>' }[k]; f[k] = val; }
+      } else if (w === 'plain') { if (f.u) cur += '</u>'; if (f.i) cur += '</em>'; if (f.b) cur += '</strong>'; f = { b: false, i: false, u: false }; }
+    } else if (m[5]) cur += m[5] === '~' ? ' ' : m[5] === '_' || m[5] === '-' ? '-' : esc(m[5]);
+    else if (m[6] === '{') { depth++; stack.push({ ...f }); }
+    else if (m[6] === '}') {
+      depth--;
+      const prev = stack.pop() || { b: false, i: false, u: false };
+      for (const k of ['u', 'i', 'b']) if (f[k] && !prev[k]) cur += { b: '</strong>', i: '</em>', u: '</u>' }[k];
+      for (const k of ['b', 'i', 'u']) if (!f[k] && prev[k]) cur += { b: '<strong>', i: '<em>', u: '<u>' }[k];
+      f = prev;
+    } else if (m[7]) cur += esc(m[7]);
+  }
+  paras.push(blockHtml('p', cur));
+  const html = paras.filter(Boolean).join('\n');
+  // Repair any formatting tags left unbalanced by odd RTF.
+  const t = document.createElement('template'); t.innerHTML = html;
+  return { html: t.innerHTML };
+}
+
+function parseText(s) {
+  s = s.replace(/\r\n?/g, '\n').replace(/ /g, ' ');
+  const blocks = /\n\s*\n/.test(s) ? s.split(/\n\s*\n+/) : s.split('\n');
+  const multi = blocks.filter(b => b.includes('\n'));
+  const lens = multi.flatMap(b => b.split('\n').slice(0, -1).map(l => l.length));
+  const hardWrapped = lens.length > 5 && lens.filter(n => n >= 55 && n <= 90).length / lens.length > .7;
+  return {
+    html: blocks.map(b => {
+      const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
+      if (!lines.length) return '';
+      const inner = lines.map(esc).join(hardWrapped ? ' ' : '<br>');
+      return blockHtml('p', inner);
+    }).filter(Boolean).join('\n'),
+  };
+}
+
+function parseMarkdown(s) {
+  s = s.replace(/\r\n?/g, '\n');
+  const inline = t => esc(t)
+    .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`)
+    .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\*)|(^|[^_\w])_(?!\s)(.+?)_(?!\w)/g, (_, p1, a, p2, b) => `${p1 ?? p2 ?? ''}<em>${a ?? b}</em>`)
+    .replace(/~~(.+?)~~/g, '<s>$1</s>');
+  return {
+    html: s.split(/\n\s*\n+/).map(b => {
+      b = b.trim();
+      if (!b) return '';
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(b)) return '<hr>';
+      const hm = b.match(/^(#{1,6})\s+(.*)$/);
+      if (hm && !b.includes('\n')) return blockHtml('h' + Math.min(3, hm[1].length), inline(hm[2]));
+      if (/^>/.test(b)) return blockHtml('blockquote', b.split('\n').map(l => inline(l.replace(/^>\s?/, ''))).join('<br>'));
+      return blockHtml('p', b.split('\n').map(inline).join('<br>'));
+    }).filter(Boolean).join('\n'),
+  };
+}
+
+// Reads AO3's download preface (title, author, tags, summary) when the file has one.
+function ao3Meta(doc) {
+  const dl = doc.querySelector('dl.tags');
+  const pre = doc.querySelector('#preface') || dl?.closest('.meta');
+  if (!pre && !dl) return null;
+  const meta = { tags: {} };
+  meta.title = pre?.querySelector('h1')?.textContent.trim() || '';
+  meta.author = pre?.querySelector('a[rel="author"]')?.textContent.trim() || '';
+  if (dl) {
+    for (const dt of dl.querySelectorAll('dt')) {
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.localName !== 'dd') continue;
+      const k = dt.textContent.replace(/:\s*$/, '').trim();
+      const vals = [...dd.querySelectorAll('a')].map(a => a.textContent.trim()).filter(Boolean);
+      meta.tags[k] = vals.length ? vals : [dd.textContent.trim()];
+    }
+  }
+  const sumH = [...(pre || doc).querySelectorAll('h2, h3, p, b')].find(e => /^summary:?$/i.test(e.textContent.trim()));
+  let sum = sumH?.nextElementSibling;
+  while (sum && !/blockquote|div|p/i.test(sum.localName)) sum = sum.nextElementSibling;
+  if (sum) meta.blurb = [...sum.querySelectorAll('p')].map(p => p.textContent.trim()).filter(Boolean).join('\n\n') || sum.textContent.trim();
+  return (meta.title || meta.blurb || Object.keys(meta.tags).length) ? meta : null;
+}
+
+function cssClasses(doc) {
+  const map = new Map();
+  for (const st of doc.querySelectorAll('style')) {
+    for (const m of st.textContent.matchAll(/\.([\w-]+)\s*\{([^}]*)\}/g)) map.set(m[1], (map.get(m[1]) || '') + ';' + m[2]);
+  }
+  return map;
+}
+function styleFmt(el, classes, f) {
+  let css = el.getAttribute('style') || '';
+  for (const c of el.classList) css += ';' + (classes.get(c) || '');
+  if (!css) return f;
+  const n = { ...f };
+  const w = css.match(/font-weight\s*:\s*(\w+)/g)?.pop()?.split(':')[1].trim();
+  if (w) n.b = w === 'bold' || +w >= 600;
+  const st = css.match(/font-style\s*:\s*(\w+)/g)?.pop()?.split(':')[1].trim();
+  if (st) n.i = st === 'italic' || st === 'oblique';
+  const dec = css.match(/text-decoration(?:-line)?\s*:\s*([^;]+)/g)?.pop();
+  if (dec) { n.u = /underline/.test(dec); n.s = /line-through/.test(dec); }
+  return n;
+}
+
+function parseHtml(s) {
+  const doc = new DOMParser().parseFromString(s, 'text/html');
+  const meta = ao3Meta(doc);
+  if (meta) {
+    doc.querySelectorAll('#preface, #afterword').forEach(e => e.remove());
+    const m = doc.querySelector('dl.tags')?.closest('.meta');
+    if (m && !m.closest('#chapters')) m.remove();
+  }
+  const classes = cssClasses(doc);
+  const out = [];
+  let cur = null;
+  const flush = () => { if (cur) out.push(blockHtml(cur.tag, cur.inner)); cur = null; };
+  const ensure = tag => { if (!cur) cur = { tag: tag || 'p', inner: '' }; };
+  const SKIP = /^(script|style|head|title|noscript|svg|iframe|form|button|input|select|textarea|nav|template|object|video|audio|canvas|map)$/;
+  const BLOCK = /^(p|div|section|article|main|header|footer|aside|center|pre|li|dd|dt|tr|figure|figcaption|address|body|ul|ol|dl|table|tbody|thead)$/;
+  const walk = (el, f, q) => {
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) {
+        const t = n.textContent.replace(/[\s ]+/g, ' ');
+        if (!t.trim() && !cur) continue;
+        ensure(q ? 'blockquote' : 'p');
+        cur.inner += wrapFmt(t, f);
+        continue;
+      }
+      if (n.nodeType !== 1) continue;
+      const tag = n.localName;
+      if (SKIP.test(tag) || n.hidden || /display\s*:\s*none/.test(n.getAttribute('style') || '')) continue;
+      const g = styleFmt(n, classes, {
+        ...f,
+        ...(/^(b|strong)$/.test(tag) && { b: true }),
+        ...(/^(i|em|cite|dfn|var)$/.test(tag) && { i: true }),
+        ...(tag === 'u' && { u: true }),
+        ...(/^(s|strike|del)$/.test(tag) && { s: true }),
+      });
+      if (/^h[1-6]$/.test(tag)) { flush(); cur = { tag: 'h' + Math.min(3, +tag[1]), inner: '' }; walk(n, { ...g, b: false }, q); flush(); }
+      else if (tag === 'hr') { flush(); out.push('<hr>'); }
+      else if (tag === 'br') { ensure(q ? 'blockquote' : 'p'); cur.inner += '<br>'; }
+      else if (tag === 'blockquote') { flush(); walk(n, g, true); flush(); }
+      else if (tag === 'img') { const a = n.getAttribute('alt'); if (a && a.trim().length > 1) { ensure(); cur.inner += esc(a); } }
+      else if (BLOCK.test(tag)) {
+        flush();
+        if (tag === 'li') { cur = { tag: q ? 'blockquote' : 'p', inner: '• ' }; }
+        walk(n, g, q);
+        flush();
+      } else walk(n, g, q);
+    }
+  };
+  walk(doc.body || doc.documentElement, {}, false);
+  flush();
+  return { html: out.filter(Boolean).join('\n').replace(/(<hr>\n?){2,}/g, '<hr>\n'), meta };
+}
+
+function decodeText(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8[0] === 0xff && u8[1] === 0xfe) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+  if (u8[0] === 0xfe && u8[1] === 0xff) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8).replace(/^﻿/, ''); }
+  catch { return new TextDecoder('windows-1252').decode(u8); }
+}
+
+function plainOf(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  t.content.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+  return [...t.content.children].map(e => e.localName === 'hr' ? '* * *' : e.textContent.trim()).join('\n\n');
+}
+
+const kindOf = (name, mime) => KINDS[mime] || EXT_KIND[lc(name).split('.').pop()] || null;
+const cleanTitle = name => name.replace(/\.(txt|text|md|markdown|html?|xhtml|docx?|odt|rtf|epub)$/i, '').replace(/^\s*(\d{1,4}\s*[-_.)\]:]+\s*|0\d{0,3}\s+)(?=\S)/, '').replace(/_/g, ' ').trim() || name;
+
+async function parseAny(name, kind, data) {
+  const buf = data instanceof ArrayBuffer ? data : null;
+  let r;
+  if (kind === 'docx') r = await parseDocx(buf);
+  else if (kind === 'odt') r = await parseOdt(buf);
+  else if (kind === 'epub') r = await parseEpub(buf);
+  else {
+    const s = typeof data === 'string' ? data : decodeText(buf);
+    if (kind === 'html' || kind === 'gdoc') r = parseHtml(s);
+    else if (kind === 'rtf') r = parseRtf(s);
+    else if (kind === 'md') r = parseMarkdown(s);
+    else r = parseText(s);
+  }
+  if (!r.html.trim()) throw new Error('No readable text found.');
+  const plain = plainOf(r.html);
+  const meta = r.meta || null;
+  return {
+    title: meta?.title || cleanTitle(name),
+    html: r.html, plain, words: wordsIn(plain), meta,
+    blurb: meta?.blurb || '',
+  };
+}
+
+/* ───────────── Google sign-in and Drive ───────────── */
+
+const G = {
+  token: null, exp: 0,
+  valid() { return this.token && Date.now() < this.exp - 60000; },
+};
+try { const s = JSON.parse(localStorage.getItem('cal.token') || 'null'); if (s && s.exp > Date.now()) { G.token = s.token; G.exp = s.exp; } } catch {}
+function dropToken() { G.token = null; G.exp = 0; pref.del('token'); }
+function gotToken(token, expiresIn) {
+  G.token = token; G.exp = Date.now() + expiresIn * 1000;
+  pref.set('token', { token: G.token, exp: G.exp });
+  pref.set('signedIn', true);
+  gfetch(`${DRIVE}/about?fields=user(emailAddress)`).then(a => { pref.set('googleEmail', a.user.emailAddress); if (S.route.name === 'settings') render(); }, () => {});
+}
+const pageSignIn = () => matchMedia('(pointer: coarse)').matches;
+
+function loadGis() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = res;
+    s.onerror = () => rej(new Error('Could not reach Google. Are you online?'));
+    document.head.append(s);
+  });
+}
+
+// Phones leave the page for Google and come back with the token in the address.
+function signInByPage(after) {
+  const state = uid();
+  try { sessionStorage.setItem('cal.oauth', JSON.stringify({ state, after, route: location.hash })); } catch {}
+  const q = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: location.origin + location.pathname, response_type: 'token', scope: SCOPE, state, include_granted_scopes: 'true' });
+  const hint = pref.get('googleEmail', '');
+  if (hint) q.set('login_hint', hint);
+  location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + q);
+  return new Promise(() => {});
+}
+function signInReturn() {
+  if (!/state=/.test(location.hash)) return null;
+  const r = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('cal.oauth') || 'null'); sessionStorage.removeItem('cal.oauth'); } catch {}
+  history.replaceState(null, '', location.pathname + location.search + (saved?.route || '#/'));
+  if (!saved || saved.state !== r.state) return null;
+  if (r.error) { toast(r.error === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in failed: ' + r.error); return null; }
+  gotToken(r.access_token, +r.expires_in);
+  return saved.after || 'signed-in';
+}
+let signing = null;
+function signIn(after) {
+  if (pageSignIn()) return signInByPage(after);
+  if (signing) return signing;
+  signing = (async () => {
+    await loadGis();
+    await new Promise((res, rej) => {
+      google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID, scope: SCOPE, hint: pref.get('googleEmail', ''),
+        callback: r => r.error ? rej(new Error(r.error_description || r.error)) : (gotToken(r.access_token, r.expires_in), res()),
+        error_callback: e => rej(new Error(e.message || 'Sign-in was closed.')),
+      }).requestAccessToken({ prompt: '' });
+    });
+  })().finally(() => { signing = null; });
+  return signing;
+}
+function signOut() {
+  if (G.token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(G.token, () => {});
+  dropToken(); pref.del('signedIn'); pref.del('googleEmail');
+}
+
+async function gsend(url, as = 'json') {
+  const c = new AbortController(), t = setTimeout(() => c.abort(), 90000);
+  let r;
+  try { r = await fetch(url, { headers: { Authorization: 'Bearer ' + G.token }, signal: c.signal }); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'Google did not answer in time.' : 'Could not reach Google. Are you online?'); }
+  finally { clearTimeout(t); }
+  if (r.status === 401) { dropToken(); throw Object.assign(new Error('Google sign-in expired. Sign in again.'), { status: 401 }); }
+  if (!r.ok) { let msg = r.statusText; try { msg = (await r.json()).error.message; } catch {} throw Object.assign(new Error(msg), { status: r.status }); }
+  return as === 'json' ? r.json() : as === 'text' ? r.text() : r.arrayBuffer();
+}
+const gfetch = url => gsend(url, 'json');
+
+const DRIVE_MIMES = Object.keys(KINDS);
+const DRIVE_FIELDS = 'nextPageToken,files(id,name,mimeType,modifiedTime,size,shortcutDetails)';
+async function driveList(q) {
+  const files = [];
+  let page = '';
+  do {
+    const p = new URLSearchParams({ q, fields: DRIVE_FIELDS, pageSize: '1000', orderBy: 'folder,name_natural', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', ...(page && { pageToken: page }) });
+    const r = await gfetch(`${DRIVE}/files?${p}`);
+    files.push(...r.files);
+    page = r.nextPageToken;
+  } while (page);
+  return files.map(f => f.mimeType === GSHORTCUT && f.shortcutDetails ? { ...f, id: f.shortcutDetails.targetId, mimeType: f.shortcutDetails.targetMimeType, shortcut: true } : f)
+    .filter(f => f.mimeType === GFOLDER || KINDS[f.mimeType] || kindOf(f.name, ''));
+}
+const mimeQ = () => '(' + [GFOLDER, GSHORTCUT, ...DRIVE_MIMES].map(m => `mimeType='${m}'`).join(' or ') + ')';
+const qstr = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+async function driveFetch(f) {
+  const kind = kindOf(f.name, f.mimeType);
+  if (kind === 'gdoc') return { kind, data: await gsend(`${DRIVE}/files/${f.id}/export?mimeType=text/html`, 'text') };
+  return { kind, data: await gsend(`${DRIVE}/files/${f.id}?alt=media&supportsAllDrives=true`, 'buf') };
+}
+
+// Expands chosen folders into files (with the folder each came from), depth-limited.
+async function expandFolders(folders, onStep) {
+  const out = [];
+  const walk = async (folder, depth) => {
+    onStep?.(folder.name);
+    const items = await driveList(`'${folder.id}' in parents and trashed=false and ${mimeQ()}`);
+    for (const it of items) {
+      if (it.mimeType === GFOLDER) { if (depth < 6) await walk(it, depth + 1); }
+      else out.push({ ...it, folder: folder.name });
+    }
+  };
+  for (const f of folders) await walk(f, 0);
+  return out;
+}
+
+async function pool(items, n, fn) {
+  let i = 0;
+  const run = async () => { while (i < items.length) { const k = i++; await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, run));
+}
+
+/* ───────────── Claude ───────────── */
+
+let sdk;
+async function claude() {
+  const key = pref.get('aiKey', '');
+  if (!key) throw new Error('Add your Claude API key in Settings first.');
+  sdk ||= (await import(SDK_URL)).default;
+  return new sdk({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 2 });
+}
+function aiError(e) {
+  const A = sdk;
+  if (A && e instanceof A.AuthenticationError) return 'Claude did not accept the API key. Check it in Settings.';
+  if (A && e instanceof A.PermissionDeniedError) return 'This API key is not allowed to use that model.';
+  if (A && e instanceof A.RateLimitError) return 'Claude is busy (rate limit). Try again in a minute.';
+  if (A && e instanceof A.APIConnectionError) return 'Could not reach Claude. Are you online?';
+  if (A && e instanceof A.APIError) return 'Claude error: ' + (e.error?.error?.message || e.message);
+  return e.message || String(e);
+}
+async function askClaude({ system, prompt, schema, maxTokens = 4000 }) {
+  const client = await claude();
+  const model = pref.get('aiModel', MODELS[0][0]);
+  const req = {
+    model, max_tokens: maxTokens, system,
+    messages: [{ role: 'user', content: prompt }],
+    output_config: { effort: 'low', format: { type: 'json_schema', schema } },
+  };
+  let r;
+  if (model === 'claude-haiku-5-5') r = await client.messages.create(req);
+  else r = await client.beta.messages.create({ ...req, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+  if (r.stop_reason === 'refusal') throw new Error('Claude declined this one.');
+  if (r.stop_reason === 'max_tokens') throw new Error('Claude ran out of room for the answer. Try again.');
+  const text = r.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  try { return JSON.parse(text); } catch { throw new Error('Claude sent back something unreadable. Try again.'); }
+}
+
+const SUMMARY_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['summary', 'characters', 'tags'],
+  properties: {
+    summary: { type: 'string' },
+    characters: { type: 'array', items: { type: 'string' } },
+    tags: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+async function summarise(id) {
+  const s = S.stories.get(id);
+  const t = await getText(id);
+  if (!s || !t) throw new Error('Story not found.');
+  if (t.plain.length > 2500000) throw new Error('This story is too long for one summary.');
+  const list = storiesIn(s.universeId);
+  const i = list.findIndex(x => x.id === id);
+  const prev = list[i - 1];
+  const tagList = groups().map(g => {
+    const names = tagsSorted().filter(x => (x.group || 'Other') === g).map(x => x.name);
+    return names.length ? `${g}: ${names.join(', ')}` : '';
+  }).filter(Boolean).join('\n') || '(none yet)';
+  const spoil = pref.get('aiSpoilers', 'light') === 'full'
+    ? 'Cover the whole plot, ending included.'
+    : 'Do not give away the ending or major twists.';
+  const prompt = [
+    `Universe: ${uName(s.universeId)}`,
+    s.universeId ? `Place in its timeline: story ${i + 1} of ${list.length}${s.era ? `, era "${s.era}"` : ''}` : '',
+    prev ? `The story before it in the timeline: "${prev.title}"${prev.summary ? ` (${prev.summary})` : ''}` : '',
+    `Tags the reader already uses, by group:\n${tagList}`,
+    '',
+    'Write a catalogue entry for this story, for the reader who owns it, so they can recall it or pick it to read.',
+    `- summary: 2 to 4 sentences of plain prose in the present tense. Say who it is about and what happens. ${spoil} Do not repeat the title.`,
+    '- characters: the main named characters, by the name the story uses most.',
+    '- tags: up to 6 tags that fit. Use the reader\'s existing tag names exactly where they fit; add a new tag only when it is clearly useful (genre, trope, mood).',
+    '',
+    `<story title="${esc(s.title)}">`,
+    t.plain,
+    '</story>',
+  ].filter(x => x !== '').join('\n');
+  const r = await askClaude({ system: 'You write short catalogue entries for a private library of fiction.', prompt, schema: SUMMARY_SCHEMA, maxTokens: 3000 });
+  const fresh = S.stories.get(id);
+  await saveStories({ ...fresh, summary: r.summary.trim(), summaryAt: Date.now(), summaryStale: false, sugg: { characters: r.characters || [], tags: r.tags || [] } });
+  return S.stories.get(id);
+}
+
+let queue = null;
+async function summariseMany(ids) {
+  if (queue) return toast('Summaries are already running.');
+  if (!pref.get('aiKey', '')) return toast('Add your Claude API key in Settings first.', { label: 'Settings', run: () => go('#/settings') });
+  queue = { stop: false, done: 0, fail: 0, total: ids.length, last: '' };
+  const show = () => toast(`Summarising: ${queue.done + queue.fail} of ${queue.total} done…`, { label: 'Stop', run: () => { queue.stop = true; } }, 0);
+  show();
+  await pool(ids, 2, async id => {
+    if (queue.stop) return;
+    try { await summarise(id); queue.done++; } catch (e) { queue.fail++; queue.last = aiError(e); if (/API key|not allowed|reach Claude/.test(queue.last)) queue.stop = true; }
+    if (!queue.stop) show();
+    rerenderSoon();
+  });
+  const q = queue; queue = null;
+  toast(`${q.done} summar${q.done === 1 ? 'y' : 'ies'} written${q.fail ? `, ${q.fail} failed: ${q.last}` : ''}${q.stop && q.done + q.fail < q.total ? ' (stopped)' : ''}.`, null, 7000);
+  render();
+}
+
+const AI_SEARCH_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['ids', 'note'],
+  properties: { ids: { type: 'array', items: { type: 'string' } }, note: { type: 'string' } },
+};
+async function aiSearch(question) {
+  await loadAllTexts();
+  const lines = [...S.stories.values()].map(s => {
+    const tags = s.tags.map(id => S.tags.get(id)?.name).filter(Boolean).join(', ');
+    const about = (s.summary || s.blurb || (S.texts.get(s.id)?.plain || '').slice(0, 400)).replace(/\s+/g, ' ');
+    return `${s.id} | ${s.title} | ${uName(s.universeId)}${s.era ? ' / ' + s.era : ''} | ${tags} | ${about}`;
+  });
+  const prompt = `This is the reader's library, one story per line: id | title | universe / era | tags | about.\n\n${lines.join('\n')}\n\nThe reader asks: ${question}\n\nReturn the ids of the stories that answer this, best match first, at most 30 (ids exactly as given). In note, say in one short sentence what you found, or that nothing matches.`;
+  return askClaude({ system: 'You help a reader find stories in their own library.', prompt, schema: AI_SEARCH_SCHEMA, maxTokens: 2000 });
+}
+
+/* ───────────── search ───────────── */
+
+function parseQuery(q) {
+  const terms = [], neg = [], filters = [];
+  for (const m of q.matchAll(/(-?)(?:([a-z]+):)?(?:"([^"]*)"?|(\S+))/gi)) {
+    const not = !!m[1], key = lc(m[2] || ''), val = lc((m[3] ?? m[4] ?? '').trim());
+    if (!val && !key) continue;
+    if (key) filters.push({ key, val, not });
+    else (not ? neg : terms).push(val);
+  }
+  return { terms: terms.filter(Boolean), neg: neg.filter(Boolean), filters };
+}
+function lev1(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return false;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let rowMin = Infinity;
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      rowMin = Math.min(rowMin, d[i][j]);
+    }
+    if (rowMin > max) return false;
+  }
+  return d[a.length][b.length] <= max;
+}
+function passFilter(s, f) {
+  const tags = s.tags.map(id => S.tags.get(id)).filter(Boolean);
+  const v = f.val;
+  let ok;
+  switch (f.key) {
+    case 'tag': case 't': ok = tags.some(t => lc(t.name).includes(v)); break;
+    case 'in': case 'u': case 'universe': ok = v === 'unsorted' ? !s.universeId : lc(uName(s.universeId)).includes(v); break;
+    case 'era': ok = lc(s.era).includes(v); break;
+    case 'is': case 'status':
+      { const p = prog(s.id); ok = v === 'fav' || v === 'favourite' || v === 'favorite' ? p.fav : v === 'unread' || v === 'reading' || v === 'read' ? p.status === v : v === 'google' ? s.source?.kind === 'gdrive' : false; break; }
+    case 'has': ok = v === 'summary' ? !!s.summary : v === 'tags' ? tags.length > 0 : v === 'era' ? !!s.era : false; break;
+    case 'no': ok = v === 'summary' ? !s.summary : v === 'tags' ? !tags.length : v === 'era' ? !s.era : false; break;
+    case 'words': {
+      const m = v.match(/^(<|>)?=?(\d+)(k)?(?:-(\d+)(k)?)?$/);
+      if (!m) { ok = true; break; }
+      const a = +m[2] * (m[3] ? 1000 : 1), b = m[4] ? +m[4] * (m[5] ? 1000 : 1) : null;
+      ok = m[1] === '<' ? s.words < a : m[1] === '>' ? s.words > a : b != null ? s.words >= a && s.words <= b : s.words >= a;
+      break;
+    }
+    case 'by': case 'author': ok = lc(s.author).includes(v); break;
+    default: {
+      // group:value, e.g. character:anna or pairing:"a/b"
+      const g = groups().find(x => lc(x).replace(/\s+/g, '') === f.key || lc(x).replace(/s$/, '') === f.key);
+      ok = g ? tags.some(t => lc(t.group) === lc(g) && lc(t.name).includes(v)) : true;
+    }
+  }
+  return f.not ? !ok : ok;
+}
+function search(q) {
+  const { terms, neg, filters } = parseQuery(q);
+  const out = [];
+  for (const s of S.stories.values()) {
+    if (!filters.every(f => passFilter(s, f))) continue;
+    const tagText = lc(s.tags.map(id => S.tags.get(id)?.name).join(' · '));
+    const body = lc(S.texts.get(s.id)?.plain);
+    const fields = [lc(s.title), tagText, lc(s.era), lc(uName(s.universeId)), lc(`${s.summary || ''} ${s.blurb || ''}`), lc(s.author), body];
+    if (neg.some(t => fields.some(f => f.includes(t)))) continue;
+    let score = 0, ok = true;
+    for (const t of terms) {
+      let sc = 0;
+      const title = fields[0];
+      if (title.includes(t)) sc += 12 + (new RegExp('(^|\\W)' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(title) ? 6 : 0);
+      if (fields[1].includes(t)) sc += 8;
+      if (fields[2].includes(t)) sc += 5;
+      if (fields[3].includes(t)) sc += 4;
+      if (fields[4].includes(t)) sc += 4;
+      if (fields[5].includes(t)) sc += 4;
+      if (body.includes(t)) { let n = 0, i = -1; while (n < 20 && (i = body.indexOf(t, i + 1)) >= 0) n++; sc += 1 + n * .25; }
+      if (!sc && t.length >= 4) {
+        const words = (fields[0] + ' ' + fields[1]).split(/[^\p{L}\p{N}']+/u);
+        if (words.some(w => w.length >= 3 && lev1(w, t, t.length >= 8 ? 2 : 1))) sc += 5;
+      }
+      if (!sc) { ok = false; break; }
+      score += sc;
+    }
+    if (ok) out.push({ s, score, terms });
+  }
+  const uo = new Map(universesSorted().map((u, i) => [u.id, i]));
+  out.sort((a, b) => b.score - a.score || (uo.get(a.s.universeId) ?? 1e9) - (uo.get(b.s.universeId) ?? 1e9) || a.s.pos - b.s.pos);
+  return out;
+}
+function snippet(s, terms) {
+  const body = S.texts.get(s.id)?.plain || '';
+  const low = lc(body);
+  let at = -1, hit = '';
+  for (const t of terms) { const i = low.indexOf(t); if (i >= 0 && (at < 0 || i < at)) { at = i; hit = t; } }
+  if (at < 0) return null;
+  const start = Math.max(0, body.lastIndexOf(' ', Math.max(0, at - 70)));
+  const end = at + hit.length + 110;
+  const text = (start > 0 ? '…' : '') + body.slice(start, end).replace(/\s+/g, ' ').trim() + (end < body.length ? '…' : '');
+  return markTerms(text, terms);
+}
+function markTerms(text, terms) {
+  const frag = document.createDocumentFragment();
+  if (!terms.length) { frag.append(text); return frag; }
+  const re = new RegExp('(' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  let last = 0;
+  for (const m of text.matchAll(re)) { frag.append(text.slice(last, m.index), h('mark', m[0])); last = m.index + m[0].length; }
+  frag.append(text.slice(last));
+  return frag;
+}
+
+/* ───────────── sheets and dialogs ───────────── */
+
+// One history entry while any sheet is open, so the phone's Back button closes it.
+// A sheet closed by a button hides at once; the history step back follows (backPending).
+let sheetOpen = false, backPending = false, pendingNav = null, sheetOnClose = null;
+function openSheet(content, onClose) {
+  const sh = $('#sheet');
+  put(sh, h('div.grab'), content);
+  sheetOnClose = onClose || null;
+  if (!sheetOpen) {
+    sheetOpen = true;
+    $('#sheetWrap').hidden = false;
+    if (!backPending) history.pushState({ sheet: true }, '');
+  }
+  sh.scrollTop = 0;
+  setTimeout(() => sh.querySelector('[autofocus]')?.focus(), 30);
+}
+function hideSheet() {
+  if (!sheetOpen) return;
+  sheetOpen = false;
+  $('#sheetWrap').hidden = true;
+  $('#sheet').replaceChildren();
+  const f = sheetOnClose; sheetOnClose = null;
+  f?.();
+}
+function closeSheet() {
+  if (!sheetOpen) return;
+  hideSheet();
+  if (history.state?.sheet && !backPending) { backPending = true; history.back(); }
+}
+function go(hash) {
+  if (sheetOpen) closeSheet();
+  if (backPending) pendingNav = hash; else location.hash = hash;
+}
+window.addEventListener('popstate', () => {
+  if (backPending) {
+    backPending = false;
+    if (sheetOpen) history.pushState({ sheet: true }, '');
+    if (pendingNav) { const to = pendingNav; pendingNav = null; if (location.hash !== to) location.hash = to; }
+    return;
+  }
+  if (sheetOpen) hideSheet();
+});
+$('#sheetBack').addEventListener('click', closeSheet);
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (sheetOpen) { e.preventDefault(); closeSheet(); }
+  else if (!$('#rLookPop').hidden) $('#rLookPop').hidden = true;
+  else if (!$('#reader').hidden) closeReader();
+});
+
+// In-app replacement for alert/confirm/prompt.
+function ask({ title, text, ok = 'OK', cancel = 'Cancel', input, danger, extra }) {
+  return new Promise(res => {
+    let done = false;
+    const field = input ? h('input.field', { type: 'text', value: input.value || '', placeholder: input.placeholder || '', autofocus: true, list: input.list || null }) : null;
+    const finish = v => { if (done) return; done = true; res(v); closeSheet(); };
+    // With an input: OK gives the text ('' when empty), Cancel gives null.
+    if (field) field.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finish(field.value.trim()); } });
+    openSheet([
+      h('h2', title),
+      text && h('p.sub', { style: { whiteSpace: 'pre-wrap' } }, text),
+      field, extra,
+      h('div.foot',
+        cancel && h('button.btn', { type: 'button', on: { click: () => finish(null) } }, cancel),
+        h('button.btn' + (danger ? '.danger' : '.primary'), { type: 'button', on: { click: () => finish(field ? field.value.trim() : true) } }, ok)),
+    ], () => { if (!done) { done = true; res(null); } });
+  });
+}
+
+/* story details */
+async function openStory(id) {
+  if (!isAdmin()) return openStoryReader(id);
+  const s = S.stories.get(id);
+  if (!s) return;
+  const list = storiesIn(s.universeId);
+  const i = list.findIndex(x => x.id === id);
+  const tags = s.tags.map(t => S.tags.get(t)).filter(Boolean);
+  const suggestions = (() => {
+    if (!s.sugg) return [];
+    const have = new Set(tags.map(t => lc(t.name)));
+    const out = [];
+    for (const n of s.sugg.characters || []) if (!have.has(lc(n))) out.push({ name: n, group: 'Character' });
+    for (const n of s.sugg.tags || []) if (!have.has(lc(n)) && !out.some(o => lc(o.name) === lc(n))) {
+      const existing = [...S.tags.values()].find(t => lc(t.name) === lc(n));
+      out.push({ name: existing?.name || n, group: existing?.group || 'Other' });
+    }
+    return out;
+  })();
+  const refresh = () => openStory(id);
+  const eras = [...new Set(list.map(x => x.era).filter(Boolean))];
+  const pg = prog(id);
+  const pct = Math.round(pg.readPos * 100);
+
+  const summaryBox = h('div',
+    s.summary ? h('p.summary', s.summary) : h('p.muted.small', 'No summary yet.'),
+    s.summaryStale && s.summary ? h('p.muted.small', 'The text has changed since this summary was written.') : null,
+    s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null);
+  const sumBtn = h('button.btn.small', {
+    type: 'button',
+    on: {
+      click: async e => {
+        const b = e.currentTarget; b.disabled = true; b.textContent = 'Summarising…';
+        try { await summarise(id); refresh(); rerenderSoon(); } catch (err) { toast(aiError(err), null, 6000); b.disabled = false; b.textContent = 'Try again'; }
+      },
+    },
+  }, icon('sparkle'), s.summary ? 'Rewrite summary' : 'Summarise with Claude');
+
+  openSheet([
+    h('h2', s.title),
+    h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
+    h('div.btn-row',
+      h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue (${pct}%)` : pg.status === 'read' ? 'Read again' : 'Read'),
+      h('button.btn', { type: 'button', 'aria-pressed': String(pg.fav), on: { click: () => { setProg(id, { fav: !pg.fav }); refresh(); rerenderSoon(); } } }, pg.fav ? '★ Favourite' : '☆ Favourite'),
+      h('button.btn', { type: 'button', on: { click: () => { setProg(id, { status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }); refresh(); rerenderSoon(); } } }, pg.status === 'read' ? 'Mark unread' : 'Mark read')),
+    h('h3', 'Summary'), summaryBox,
+    h('div.btn-row', { style: { marginTop: '10px' } }, sumBtn),
+    h('h3', 'Tags'),
+    h('div.chips',
+      tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, title: 'Remove this tag', on: { click: async () => { await saveStories({ ...s, tags: s.tags.filter(x => x !== t.id) }); refresh(); rerenderSoon(); } } }, t.name, h('span.x', '×'))),
+      h('button.chip.add', { type: 'button', on: { click: () => pickTags([id], refresh) } }, '+ Tag')),
+    suggestions.length ? [
+      h('p.muted.small', { style: { margin: '12px 0 6px' } }, "Claude's suggestions. Tap one to add it."),
+      h('div.chips', suggestions.map(sg => h('button.chip.sugg', {
+        type: 'button', css: { '--c': GROUP_COLORS[lc(sg.group)] || hashColor(sg.group) },
+        on: { click: async () => { const t = await findOrMakeTag(sg.name, sg.group); const cur = S.stories.get(id); if (!cur.tags.includes(t.id)) await saveStories({ ...cur, tags: [...cur.tags, t.id] }); refresh(); rerenderSoon(); } },
+      }, sg.name, h('span.small.muted', sg.group === 'Character' ? ' · character' : '')))),
+    ] : null,
+    h('h3', 'Timeline'),
+    h('div.btn-row',
+      h('button.btn.small', { type: 'button', disabled: i <= 0, on: { click: async () => { const ids = list.map(x => x.id); [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↑ Earlier'),
+      h('button.btn.small', { type: 'button', disabled: i >= list.length - 1, on: { click: async () => { const ids = list.map(x => x.id); [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↓ Later'),
+      h('button.btn.small', { type: 'button', on: { click: () => pickPlace([id], async (u, at) => { await placeStories([id], u, at); rerenderSoon(); openStory(id); }) } }, 'Move…'),
+      h('button.btn.small', {
+        type: 'button', on: {
+          click: async () => {
+            const v = await askEra(eras, s.era);
+            if (v === null) return openStory(id);
+            await saveStories({ ...S.stories.get(id), era: v });
+            rerenderSoon(); openStory(id);
+          },
+        },
+      }, s.era ? 'Change era' : 'Set era'),
+      h('button.btn.small', { type: 'button', on: { click: () => addFlow({ u: s.universeId, at: i + 1 }) } }, '+ Add a story after this')),
+    h('h3', 'Details'),
+    h('dl.kv',
+      h('dt', 'Source'), h('dd', s.source?.kind === 'gdrive' ? `Google Drive: ${s.source.name}` : s.source?.name || 'File'),
+      h('dt', 'Added'), h('dd', fmtDate(s.addedAt)),
+      pg.lastRead ? [h('dt', 'Last read'), h('dd', fmtDate(pg.lastRead))] : null,
+      s.summaryAt ? [h('dt', 'Summary'), h('dd', fmtDate(s.summaryAt))] : null),
+    h('div.foot',
+      h('button.btn.small', {
+        type: 'button', on: {
+          click: async () => {
+            const v = await ask({ title: 'Rename story', input: { value: s.title }, ok: 'Rename' });
+            if (v) { await saveStories({ ...S.stories.get(id), title: v }); rerenderSoon(); }
+            openStory(id);
+          },
+        },
+      }, 'Rename'),
+      s.source?.kind === 'gdrive' ? h('button.btn.small', { type: 'button', on: { click: async () => { await refreshFromDrive([id], true); openStory(id); } } }, 'Reload from Google') : null,
+      h('button.btn.small.danger', {
+        type: 'button', on: {
+          click: async () => {
+            if (await ask({ title: 'Remove this story?', text: `"${s.title}" leaves Callisto on this device. The original file is not touched.`, ok: 'Remove', danger: true })) {
+              await deleteStories([id]); toast('Story removed.');
+              if (R.id === id) location.replace('#/'); else render();
+            } else openStory(id);
+          },
+        },
+      }, 'Remove')),
+  ]);
+}
+
+// The story sheet readers see: no editing, tags link to their page, neighbours in the timeline.
+function openStoryReader(id) {
+  const s = S.stories.get(id);
+  if (!s) return;
+  const list = storiesIn(s.universeId);
+  const i = list.findIndex(x => x.id === id);
+  const tags = s.tags.map(t => S.tags.get(t)).filter(Boolean);
+  const pg = prog(id);
+  const pct = Math.round(pg.readPos * 100);
+  const near = (x, label) => x && h('button.next-link', { type: 'button', on: { click: () => openStory(x.id) } }, h('small', label), h('b', x.title));
+  openSheet([
+    h('h2', s.title),
+    h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
+    h('div.btn-row',
+      h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue (${pct}%)` : pg.status === 'read' ? 'Read again' : 'Read'),
+      h('button.btn', { type: 'button', 'aria-pressed': String(pg.fav), on: { click: () => { setProg(id, { fav: !pg.fav }); openStory(id); rerenderSoon(); } } }, pg.fav ? '★ Favourite' : '☆ Favourite'),
+      h('button.btn', { type: 'button', on: { click: () => { setProg(id, { status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }); openStory(id); rerenderSoon(); } } }, pg.status === 'read' ? 'Mark unread' : 'Mark read')),
+    s.summary ? [h('h3', 'Summary'), h('p.summary', s.summary)] : null,
+    s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null,
+    tags.length ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)))] : null,
+    s.universeId && (list[i - 1] || list[i + 1]) ? [h('h3', 'In the timeline'), h('div.near', near(list[i - 1], 'Before this'), near(list[i + 1], 'After this'))] : null,
+  ]);
+}
+
+function askEra(eras, current) {
+  const listId = 'eraList';
+  const dl = h('datalist#' + listId, eras.map(e => h('option', { value: e })));
+  return ask({
+    title: 'Era', text: 'A label for this point in the timeline, such as "Year 2" or "Before the war". Stories next to each other with the same era are grouped under it. Leave it empty for none.',
+    input: { value: current || '', placeholder: 'Era', list: listId }, ok: 'Save', extra: dl,
+  });
+}
+
+/* tag picker: works for one story or many (tri-state) */
+function pickTags(ids, after) {
+  const chosen = new Map();
+  for (const t of S.tags.values()) {
+    const n = ids.filter(id => S.stories.get(id)?.tags.includes(t.id)).length;
+    chosen.set(t.id, n === 0 ? 'none' : n === ids.length ? 'all' : 'some');
+  }
+  const start = new Map(chosen);
+  const q = h('input.field', { type: 'search', placeholder: 'Find or create a tag', autofocus: true });
+  const groupSel = h('select.field', { style: { maxWidth: '180px' } }, groups().map(g => h('option', { value: g }, g)));
+  groupSel.value = 'Other';
+  const box = h('div');
+  const create = h('div.btn-row', { style: { marginTop: '10px' } });
+  const draw = () => {
+    const f = lc(q.value.trim());
+    box.replaceChildren();
+    for (const g of groups()) {
+      const ts = tagsSorted().filter(t => (t.group || 'Other') === g && (!f || lc(t.name).includes(f)));
+      if (!ts.length) continue;
+      box.append(h('h3', g), h('div.chips', ts.map(t => {
+        const st = chosen.get(t.id);
+        return h('button.chip' + (st === 'all' ? '.on' : ''), {
+          type: 'button', css: { '--c': tagColor(t) }, style: st === 'some' ? { borderStyle: 'dashed', borderColor: 'var(--accent)' } : null,
+          'aria-pressed': st === 'all' ? 'true' : st === 'some' ? 'mixed' : 'false',
+          on: { click: () => { chosen.set(t.id, st === 'all' ? 'none' : 'all'); draw(); } },
+        }, st === 'all' ? '✓ ' : '', t.name);
+      })));
+    }
+    if (!box.children.length) box.append(h('p.muted.small', S.tags.size ? 'No tags match.' : 'No tags yet. Type a name above to make one.'));
+    const exact = [...S.tags.values()].some(t => lc(t.name) === f);
+    create.replaceChildren();
+    if (f && !exact) create.append(groupSel, h('button.btn.small', {
+      type: 'button', on: {
+        click: async () => { const t = await findOrMakeTag(q.value.trim(), groupSel.value); chosen.set(t.id, 'all'); start.set(t.id, 'none'); q.value = ''; draw(); },
+      },
+    }, `Create "${q.value.trim()}"`));
+  };
+  q.addEventListener('input', draw);
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); create.querySelector('button')?.click(); } });
+  draw();
+  openSheet([
+    h('h2', ids.length > 1 ? `Tags for ${ids.length} stories` : 'Tags'),
+    ids.length > 1 ? h('p.sub', 'Dashed tags are on some of them. Tap to put a tag on all, tap again to take it off all.') : null,
+    q, create, box,
+    h('div.foot',
+      h('button.btn', { type: 'button', on: { click: () => { closeSheet(); after && setTimeout(after, 60); } } }, 'Cancel'),
+      h('button.btn.primary', {
+        type: 'button', on: {
+          click: async () => {
+            const upd = ids.map(id => {
+              const s = S.stories.get(id);
+              const set = new Set(s.tags);
+              for (const [tid, st] of chosen) { if (st === start.get(tid)) continue; if (st === 'all') set.add(tid); if (st === 'none') set.delete(tid); }
+              return { ...s, tags: [...set] };
+            });
+            await saveStories(upd);
+            closeSheet(); rerenderSoon(); after && setTimeout(after, 60);
+          },
+        },
+      }, 'Done')),
+  ]);
+}
+
+/* placement: pick a universe and a slot in its timeline */
+function pickPlace(ids, done, opts = {}) {
+  const moving = new Set(ids);
+  let u = opts.u ?? (ids.length ? S.stories.get(ids[0])?.universeId : '') ?? '';
+  let at = opts.at ?? null;
+  const sel = h('select.field');
+  const fill = () => {
+    sel.replaceChildren(h('option', { value: '' }, 'Unsorted'), ...universesSorted().map(x => h('option', { value: x.id }, x.name)), h('option', { value: '__new' }, '+ New universe…'));
+    sel.value = u;
+  };
+  fill();
+  const box = h('div.pick-list');
+  const draw = () => {
+    const list = storiesIn(u).filter(s => !moving.has(s.id));
+    if (at == null || at > list.length) at = list.length;
+    const slot = (k, label) => h('button.slot' + (k === at ? '.on' : ''), { type: 'button', on: { click: () => { at = k; draw(); } } }, k === at ? (opts.verb || 'Here') : label);
+    box.replaceChildren(slot(0, list.length ? 'At the start' : 'Here'));
+    list.forEach((s, k) => box.append(h('div.item', `${k + 1}. ${s.title}`, s.era ? h('span.muted', ` · ${s.era}`) : null), slot(k + 1, k + 1 === list.length ? 'At the end' : 'Put here')));
+    box.querySelector('.slot.on')?.scrollIntoView({ block: 'nearest' });
+  };
+  sel.addEventListener('change', async () => {
+    if (sel.value === '__new') {
+      const name = await ask({ title: 'New universe', input: { placeholder: 'Name' }, ok: 'Create' });
+      if (name) { const nu = await newUniverse(name); u = nu.id; }
+      return pickPlace(ids, done, { ...opts, u, at: null });
+    }
+    u = sel.value; at = null; draw();
+  });
+  draw();
+  openSheet([
+    h('h2', opts.title || (ids.length > 1 ? `Move ${ids.length} stories` : 'Move story')),
+    h('p.sub', 'Choose the universe, then where in its timeline.'),
+    sel, h('h3', 'Position'), box,
+    h('div.foot',
+      h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
+      h('button.btn.primary', { type: 'button', on: { click: () => { const a = at; closeSheet(); setTimeout(() => done(u, a), 60); } } }, opts.ok || 'Move')),
+  ]);
+}
+
+/* ───────────── importing ───────────── */
+
+function addFlow(preset = {}) {
+  S.importPreset = preset;
+  openSheet([
+    h('h2', 'Add stories'),
+    h('p.sub', 'Text files, Word (.docx), OpenDocument, RTF, Markdown, HTML, EPUB, AO3 downloads and Google Docs.'),
+    h('div.menu-list',
+      h('button', { type: 'button', on: { click: () => { $('#filePick').click(); closeSheet(); } } }, icon('doc'), 'From files on this device'),
+      h('button', { type: 'button', on: { click: () => openDrive() } }, icon('folder'), 'From Google Drive (Docs, Word, text)'),
+      h('button', { type: 'button', on: { click: () => newUniverseFlow() } }, icon('plus'), 'New universe')),
+  ]);
+}
+
+$('#filePick').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  const items = [], errors = [];
+  toast(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`, null, 0);
+  await pool(files, 3, async f => {
+    const kind = kindOf(f.name, f.type);
+    if (!kind) { errors.push(`${f.name}: ${/\.doc$/i.test(f.name) ? 'old Word format, save it as .docx' : /\.pdf$/i.test(f.name) ? 'PDF is not supported' : 'not a supported file type'}`); return; }
+    try {
+      const p = await parseAny(f.name, kind, await f.arrayBuffer());
+      items.push({ ...p, sortName: f.name, source: { kind: 'file', name: f.name, modifiedTime: f.lastModified } });
+    } catch (err) { errors.push(`${f.name}: ${err.message}`); }
+  });
+  $('#toast').hidden = true;
+  if (!items.length) return ask({ title: 'Nothing imported', text: errors.join('\n'), cancel: null });
+  importOptions(items, errors);
+});
+
+async function newUniverseFlow() {
+  const name = await ask({ title: 'New universe', text: 'A universe holds stories that share a world, in timeline order.', input: { placeholder: 'Name' }, ok: 'Create' });
+  if (!name) return;
+  const u = await newUniverse(name);
+  go('#/u/' + u.id);
+}
+
+function importOptions(items, errors = [], ctx = {}) {
+  items.sort((a, b) => collator.compare(a.folderPath || '', b.folderPath || '') || collator.compare(a.sortName, b.sortName));
+  const preset = S.importPreset || {};
+  let u = preset.u ?? (S.route.name === 'universe' ? S.route.id : '');
+  let at = preset.at ?? null;
+  const tagIds = new Set();
+  const hasAo3 = items.some(i => i.meta && Object.keys(i.meta.tags || {}).length);
+  const folders = [...new Set(items.map(i => i.folder).filter(Boolean))];
+  const byDrive = new Map([...S.stories.values()].filter(s => s.source?.driveId).map(s => [s.source.driveId, s]));
+  const byTitle = new Map([...S.stories.values()].map(s => [lc(s.title) + '|' + s.words, s]));
+  const dupOf = it => (it.source.driveId && byDrive.get(it.source.driveId)) || byTitle.get(lc(it.title) + '|' + it.words);
+  const dups = items.filter(dupOf).length;
+
+  const uSel = h('select.field');
+  const fill = () => { uSel.replaceChildren(h('option', { value: '' }, 'Unsorted'), ...universesSorted().map(x => h('option', { value: x.id }, x.name)), h('option', { value: '__new' }, '+ New universe…')); uSel.value = u; };
+  fill();
+  const perFolder = h('input', { type: 'checkbox', checked: folders.length > 1 });
+  const ao3 = h('input', { type: 'checkbox', checked: pref.get('ao3Tags', false) });
+  const sum = h('input', { type: 'checkbox', checked: !!pref.get('aiKey', '') && pref.get('sumOnImport', false), disabled: !pref.get('aiKey', '') });
+  const dupSel = h('select.field', h('option', { value: 'update' }, 'Update their text, keep their place and tags'), h('option', { value: 'skip' }, 'Skip them'), h('option', { value: 'copy' }, 'Add them again as copies'));
+  const era = h('input.field', { type: 'text', placeholder: 'Era for all of these (optional)' });
+  const tagBox = h('div.chips');
+  const drawTags = () => tagBox.replaceChildren(
+    ...[...tagIds].map(id => S.tags.get(id)).filter(Boolean).map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => { tagIds.delete(t.id); drawTags(); } } }, t.name, h('span.x', '×'))),
+    h('button.chip.add', { type: 'button', on: { click: () => chooseTags() } }, '+ Tag all of them'));
+  const chooseTags = async () => {
+    const name = await ask({ title: 'Tag all of them', input: { placeholder: 'Tag name', list: 'allTags' }, ok: 'Add', extra: h('datalist#allTags', tagsSorted().map(t => h('option', { value: t.name }))) });
+    if (name) { const t = await findOrMakeTag(name); tagIds.add(t.id); }
+    importOptions(items, errors, { ...ctx, restore: { u, at, tagIds, era: era.value } });
+  };
+  if (ctx.restore) { u = ctx.restore.u; at = ctx.restore.at; ctx.restore.tagIds.forEach(t => tagIds.add(t)); era.value = ctx.restore.era; uSel.value = u; }
+  drawTags();
+  const posBox = h('div.pick-list');
+  const drawPos = () => {
+    const list = storiesIn(u);
+    if (at == null || at > list.length) at = list.length;
+    const slot = (k, label) => h('button.slot' + (k === at ? '.on' : ''), { type: 'button', on: { click: () => { at = k; drawPos(); } } }, k === at ? `New stories go here (${items.length})` : label);
+    posBox.replaceChildren(slot(0, list.length ? 'At the start' : 'Here'));
+    list.forEach((s, k) => posBox.append(h('div.item', `${k + 1}. ${s.title}`), slot(k + 1, k + 1 === list.length ? 'At the end' : 'Put here')));
+  };
+  uSel.addEventListener('change', async () => {
+    if (uSel.value === '__new') {
+      const name = await ask({ title: 'New universe', input: { placeholder: 'Name' }, ok: 'Create' });
+      if (name) u = (await newUniverse(name)).id;
+      return importOptions(items, errors, { ...ctx, restore: { u, at: null, tagIds, era: era.value } });
+    }
+    u = uSel.value; at = null; drawPos();
+  });
+  drawPos();
+  const posWrap = h('div', h('h3', 'Where in the timeline'), posBox);
+  // Files picked on their own (not inside a picked folder) still go to the chosen universe.
+  const loose = items.some(i => !i.folder);
+  const uHead = h('h3', 'Universe');
+  const syncFolder = () => {
+    const on = folders.length > 0 && perFolder.checked;
+    posWrap.hidden = on;
+    uSel.hidden = uHead.hidden = on && !loose;
+    uHead.textContent = on ? 'Universe for the files picked on their own' : 'Universe';
+  };
+  perFolder.addEventListener('change', syncFolder);
+  syncFolder();
+
+  openSheet([
+    h('h2', `Add ${items.length} stor${items.length === 1 ? 'y' : 'ies'}`),
+    h('p.sub', items.slice(0, 6).map(i => i.title).join(' · ') + (items.length > 6 ? ` and ${items.length - 6} more` : '')),
+    errors.length ? h('p.small', { style: { color: 'var(--danger)', whiteSpace: 'pre-wrap' } }, `Skipped ${errors.length}:\n` + errors.slice(0, 8).join('\n') + (errors.length > 8 ? '\n…' : '')) : null,
+    folders.length ? h('label.check', perFolder, `One universe per Drive folder (${folders.length} folders: ${folders.slice(0, 4).join(', ')}${folders.length > 4 ? '…' : ''})`) : null,
+    uHead, uSel,
+    posWrap,
+    h('h3', 'Era and tags'), era, h('div', { style: { marginTop: '10px' } }, tagBox),
+    h('h3', 'Options'),
+    hasAo3 ? h('label.check', ao3, 'Use the AO3 tags in these files (fandom, relationships, characters, additional tags)') : null,
+    h('label.check', sum, pref.get('aiKey', '') ? 'Write a summary of each with Claude' : 'Write summaries with Claude (add an API key in Settings first)'),
+    dups ? [h('h3', `${dups} already in your library`), dupSel] : null,
+    h('div.foot',
+      h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
+      h('button.btn.primary', {
+        type: 'button', on: {
+          click: async e => {
+            e.currentTarget.disabled = true;
+            pref.set('ao3Tags', ao3.checked); if (!sum.disabled) pref.set('sumOnImport', sum.checked);
+            const ids = await commitImport(items, { u, at, perFolder: folders.length > 0 && perFolder.checked, tagIds: [...tagIds], era: era.value.trim(), ao3: hasAo3 && ao3.checked, dup: dupSel.value, dupOf });
+            S.importPreset = null;
+            closeSheet();
+            const target = folders.length && perFolder.checked ? '#/' : '#/u/' + (u || '_');
+            toast(`Added ${ids.added} stor${ids.added === 1 ? 'y' : 'ies'}${ids.updated ? `, updated ${ids.updated}` : ''}${ids.skipped ? `, skipped ${ids.skipped}` : ''}.`, { label: 'Open', run: () => go(target) }, 6000);
+            if (location.hash !== target) go(target); else render();
+            if (sum.checked && !sum.disabled && ids.toSummarise.length) summariseMany(ids.toSummarise);
+          },
+        },
+      }, 'Add to library')),
+  ]);
+}
+
+const AO3_GROUPS = { Fandom: 'Fandom', Fandoms: 'Fandom', Relationship: 'Pairing', Relationships: 'Pairing', Character: 'Character', Characters: 'Character', 'Additional Tags': 'Trope', 'Archive Warning': 'Warning', 'Archive Warnings': 'Warning', Rating: 'Rating', Category: 'Category', Categories: 'Category' };
+
+async function commitImport(items, o) {
+  const now = Date.now();
+  const res = { added: 0, updated: 0, skipped: 0, toSummarise: [] };
+  const groupsByU = new Map();
+  const folderU = new Map();
+  for (const it of items) {
+    const dup = o.dupOf(it);
+    if (dup && o.dup === 'skip') { res.skipped++; continue; }
+    if (dup && o.dup === 'update') {
+      await dbPut('texts', { id: dup.id, html: it.html, plain: it.plain });
+      S.texts.set(dup.id, { id: dup.id, html: it.html, plain: it.plain });
+      await saveStories({ ...dup, words: it.words, source: { ...dup.source, ...it.source }, summaryStale: !!dup.summary, updatedAt: now });
+      res.updated++;
+      continue;
+    }
+    let u = o.u || '';
+    if (o.perFolder && it.folder) {
+      if (!folderU.has(it.folder)) {
+        const hit = [...S.universes.values()].find(x => lc(x.name) === lc(it.folder));
+        folderU.set(it.folder, hit ? hit.id : (await newUniverse(it.folder)).id);
+      }
+      u = folderU.get(it.folder);
+    }
+    const tags = new Set(o.tagIds);
+    if (o.ao3 && it.meta?.tags) {
+      for (const [k, vals] of Object.entries(it.meta.tags)) {
+        const g = AO3_GROUPS[k];
+        if (!g || g === 'Rating' || g === 'Category') continue;
+        for (const v of vals) if (v && v.length < 80) tags.add((await findOrMakeTag(v, g)).id);
+      }
+    }
+    const s = {
+      id: uid(), title: it.title, universeId: u, pos: 1e9, era: o.era || '', tags: [...tags],
+      words: it.words, blurb: it.blurb || '', author: it.meta?.author || '', summary: '',
+      addedAt: now + res.added, source: it.source,
+    };
+    await dbPut('texts', { id: s.id, html: it.html, plain: it.plain });
+    S.texts.set(s.id, { id: s.id, html: it.html, plain: it.plain });
+    await saveStories(s);
+    if (!groupsByU.has(u)) groupsByU.set(u, []);
+    groupsByU.get(u).push(s.id);
+    res.toSummarise.push(s.id);
+    res.added++;
+  }
+  for (const [u, ids] of groupsByU) await placeStories(ids, u, o.perFolder ? null : o.at);
+  return res;
+}
+
+/* Google Drive browser with multi-select (files and whole folders) */
+async function openDrive(state) {
+  if (!G.valid()) {
+    openSheet([
+      h('h2', 'Google Drive'),
+      h('p.sub', 'Sign in to pick Google Docs, Word and text files from your Drive. Callisto only reads them; it never changes anything in your Drive.'),
+      h('div.foot',
+        h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
+        h('button.btn.primary', { type: 'button', on: { click: async () => { try { await signIn('drive'); openDrive(); } catch (e) { toast(e.message); } } } }, 'Sign in with Google')),
+    ]);
+    return;
+  }
+  const st = state || { path: [{ id: 'root', name: 'My Drive' }], picked: new Map(), q: '', shared: false };
+  const here = st.path[st.path.length - 1];
+  const list = h('div.drive-list', h('p.muted.small', 'Loading…'));
+  const count = h('span.muted.small');
+  const importBtn = h('button.btn.primary', { type: 'button', disabled: !st.picked.size, on: { click: () => importDrive(st) } }, 'Import');
+  const upd = () => { count.textContent = st.picked.size ? `${st.picked.size} picked` : ''; importBtn.disabled = !st.picked.size; importBtn.textContent = st.picked.size ? `Import ${st.picked.size}` : 'Import'; };
+  const q = h('input.field', { type: 'search', placeholder: 'Search your Drive by name', value: st.q });
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); openDrive({ ...st, q: q.value.trim() }); } });
+  const crumbs = h('div.crumbs',
+    h('button', { type: 'button', on: { click: () => openDrive({ ...st, path: [{ id: 'root', name: 'My Drive' }], shared: false, q: '' }) } }, 'My Drive'),
+    h('button', { type: 'button', on: { click: () => openDrive({ ...st, path: [{ id: 'shared', name: 'Shared with me' }], shared: true, q: '' }) } }, 'Shared with me'),
+    h('span.muted', '·'),
+    ...(st.q ? [h('span', `Results for "${st.q}"`)] : st.path.map((p, k) => [k ? h('span.muted', '›') : null, h('button', { type: 'button', on: { click: () => openDrive({ ...st, path: st.path.slice(0, k + 1) }) } }, p.name)]).flat()));
+  openSheet([
+    h('h2', 'Import from Google Drive'),
+    h('p.sub', 'Tick files, or tick a whole folder to bring in everything inside it (subfolders too).'),
+    q, crumbs, list,
+    h('div.foot', count, h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'), importBtn),
+  ]);
+  upd();
+  let files;
+  try {
+    const query = st.q ? `name contains '${qstr(st.q)}' and trashed=false and ${mimeQ()}`
+      : here.id === 'shared' ? `sharedWithMe and trashed=false and ${mimeQ()}`
+        : `'${here.id}' in parents and trashed=false and ${mimeQ()}`;
+    files = await driveList(query);
+  } catch (e) {
+    if (e.status === 401) return openDrive(st);
+    list.replaceChildren(h('p.small', { style: { color: 'var(--danger)' } }, e.message));
+    return;
+  }
+  if (!sheetOpen) return;
+  const rows = files.map(f => {
+    const folder = f.mimeType === GFOLDER;
+    const kind = folder ? 'folder' : kindOf(f.name, f.mimeType);
+    const box = h('input', { type: 'checkbox', checked: st.picked.has(f.id), 'aria-label': 'Pick ' + f.name, on: { change: e => { e.target.checked ? st.picked.set(f.id, { ...f, path: st.path.map(p => p.name) }) : st.picked.delete(f.id); upd(); } } });
+    const already = !folder && [...S.stories.values()].some(s => s.source?.driveId === f.id);
+    return h('div.drive-row', box,
+      folder
+        ? h('button.open', { type: 'button', on: { click: () => openDrive({ ...st, q: '', path: [...(st.q ? [{ id: 'root', name: 'My Drive' }] : st.path), { id: f.id, name: f.name }] }) } }, icon('folder'), h('span.nm', f.name), h('span.muted', '›'))
+        : h('span.nm', f.name, already ? h('span.muted.small', ' · in library') : null),
+      folder ? null : h('span.kind', kind === 'gdoc' ? 'Doc' : kind));
+  });
+  const fileRows = files.filter(f => f.mimeType !== GFOLDER);
+  put(list,
+    fileRows.length > 1 ? h('div.btn-row', { style: { margin: '4px 0 8px' } },
+      h('button.btn.small', { type: 'button', on: { click: () => { fileRows.forEach(f => st.picked.set(f.id, { ...f, path: st.path.map(p => p.name) })); list.querySelectorAll('input').forEach((b, k) => { if (files[k].mimeType !== GFOLDER) b.checked = true; }); upd(); } } }, `Tick all ${fileRows.length} files here`),
+      h('button.btn.small', { type: 'button', on: { click: () => { st.picked.clear(); list.querySelectorAll('input').forEach(b => { b.checked = false; }); upd(); } } }, 'Clear')) : null,
+    ...(rows.length ? rows : [h('p.muted.small', 'Nothing here that Callisto can read.')]));
+}
+
+async function importDrive(st) {
+  const picked = [...st.picked.values()];
+  const folders = picked.filter(f => f.mimeType === GFOLDER);
+  let files = picked.filter(f => f.mimeType !== GFOLDER).map(f => ({ ...f, folder: null }));
+  const bar = h('i', { style: { width: '0%' } });
+  const status = h('p.sub', 'Looking inside folders…');
+  openSheet([h('h2', 'Importing from Google Drive'), status, h('div.progress', bar)]);
+  try {
+    if (folders.length) files.push(...await expandFolders(folders, n => { status.textContent = `Looking inside "${n}"…`; }));
+  } catch (e) { status.textContent = e.message; return; }
+  const seen = new Set();
+  files = files.filter(f => !seen.has(f.id) && seen.add(f.id));
+  const items = [], errors = [];
+  let n = 0;
+  status.textContent = `Reading ${files.length} file${files.length === 1 ? '' : 's'}…`;
+  await pool(files, 4, async f => {
+    try {
+      const kind = kindOf(f.name, f.mimeType);
+      if (!kind) throw new Error('not a supported file type');
+      const { data } = await driveFetch(f);
+      const p = await parseAny(f.name, kind, data);
+      items.push({ ...p, sortName: f.name, folder: f.folder || null, folderPath: f.folder || '', source: { kind: 'gdrive', name: f.name, driveId: f.id, mime: f.mimeType, modifiedTime: f.modifiedTime } });
+    } catch (e) { errors.push(`${f.name}: ${e.message}`); }
+    n++;
+    bar.style.width = (n / files.length * 100).toFixed(1) + '%';
+    status.textContent = `Read ${n} of ${files.length}…`;
+  });
+  if (!items.length) return ask({ title: 'Nothing imported', text: errors.join('\n') || 'No readable files were found.', cancel: null });
+  importOptions(items, errors);
+}
+
+async function refreshFromDrive(ids, force) {
+  if (!G.valid()) { try { await signIn('refresh'); } catch (e) { return toast(e.message); } }
+  const list = ids.map(id => S.stories.get(id)).filter(s => s?.source?.driveId);
+  if (!list.length) return toast('None of these came from Google Drive.');
+  toast(`Checking ${list.length} on Google Drive…`, null, 0);
+  let changed = 0, failed = 0, gone = 0;
+  await pool(list, 4, async s => {
+    try {
+      const f = await gfetch(`${DRIVE}/files/${s.source.driveId}?fields=id,name,mimeType,modifiedTime,trashed&supportsAllDrives=true`);
+      if (f.trashed) { gone++; return; }
+      if (!force && f.modifiedTime === s.source.modifiedTime) return;
+      const kind = kindOf(f.name, f.mimeType);
+      const { data } = await driveFetch(f);
+      const p = await parseAny(f.name, kind, data);
+      const old = await getText(s.id);
+      if (old && old.plain === p.plain && !force) { await saveStories({ ...S.stories.get(s.id), source: { ...s.source, modifiedTime: f.modifiedTime } }); return; }
+      await dbPut('texts', { id: s.id, html: p.html, plain: p.plain });
+      S.texts.set(s.id, { id: s.id, html: p.html, plain: p.plain });
+      const cur = S.stories.get(s.id);
+      await saveStories({ ...cur, words: p.words, source: { ...cur.source, name: f.name, modifiedTime: f.modifiedTime }, summaryStale: !!cur.summary && old?.plain !== p.plain, updatedAt: Date.now() });
+      changed++;
+    } catch (e) { if (e.status === 404) gone++; else failed++; }
+  });
+  toast(`${changed} updated${gone ? `, ${gone} no longer on Drive` : ''}${failed ? `, ${failed} could not be checked` : ''}.`, null, 6000);
+  rerenderSoon();
+}
+
+/* ───────────── reader ───────────── */
+
+const R = { id: null, saveT: 0, lastY: 0 };
+function applyLook() {
+  const r = $('#reader');
+  r.dataset.theme = pref.get('rTheme', 'sepia');
+  r.dataset.font = pref.get('rFont', 'serif');
+  const size = pref.get('rSize', 18);
+  r.style.setProperty('--r-size', size + 'px');
+  $('#rSize').textContent = size;
+  r.querySelectorAll('[data-theme]').forEach(b => b.classList.toggle('on', b.dataset.theme === r.dataset.theme));
+  r.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('on', b.dataset.font === r.dataset.font));
+}
+async function openReader(id) {
+  const s = S.stories.get(id);
+  const t = s && await getText(id);
+  if (!s || !t) { toast('That story is not on this device.'); location.replace('#/'); return; }
+  R.id = id;
+  R.openedAt = Date.now();
+  applyLook();
+  $('#rTitle').textContent = s.title;
+  const page = $('#rPage');
+  page.innerHTML = t.html; // our own sanitised output from import
+  const first = page.firstElementChild;
+  if (!(first && /^h[1-3]$/.test(first.localName) && lc(first.textContent.trim()) === lc(s.title))) page.prepend(h('h1', s.title));
+  const list = storiesIn(s.universeId);
+  const i = list.findIndex(x => x.id === id);
+  const next = s.universeId ? list[i + 1] : null;
+  put($('#rEnd'),
+    h('p.done', '— The end —'),
+    next ? h('button.next', { type: 'button', on: { click: () => location.replace('#/read/' + next.id) } }, h('small', `Next in ${uName(s.universeId)}${next.era && next.era !== s.era ? ' · ' + next.era : ''}`), h('b', next.title), next.summary ? h('p', { style: { margin: '6px 0 0', fontSize: '14px', opacity: .8 } }, next.summary) : null) : null);
+  const r = $('#reader');
+  r.hidden = false;
+  r.classList.remove('hide-ui');
+  $('#rLookPop').hidden = true;
+  document.title = s.title + ' · Callisto';
+  const sc = $('#rScroll');
+  sc.scrollTop = 0;
+  await new Promise(requestAnimationFrame);
+  const pg = prog(id);
+  if (pg.readPos > 0 && pg.readPos < .985) sc.scrollTop = pg.readPos * (sc.scrollHeight - sc.clientHeight);
+  R.lastY = sc.scrollTop;
+  setProg(id, { status: pg.status === 'read' ? 'read' : 'reading', lastRead: Date.now() });
+  onReadScroll();
+  sc.focus({ preventScroll: true });
+}
+function closeReader() {
+  if ($('#reader').hidden) return;
+  saveReadPos();
+  if (location.hash.startsWith('#/read/')) history.length > 1 && S.cameFromApp ? history.back() : location.replace('#/');
+}
+function saveReadPos() {
+  if (!R.id) return;
+  const sc = $('#rScroll');
+  const max = sc.scrollHeight - sc.clientHeight;
+  // A story that fits on one screen counts as read once it has been open for 15 seconds.
+  const p = max > 0 ? sc.scrollTop / max : Date.now() - R.openedAt > 15000 ? 1 : 0;
+  const s = S.stories.get(R.id);
+  if (!s) return;
+  const status = p >= .985 || prog(R.id).status === 'read' ? 'read' : 'reading';
+  setProg(R.id, { readPos: p >= .985 ? 0 : p, status, lastRead: Date.now() });
+}
+function onReadScroll() {
+  const sc = $('#rScroll');
+  const max = sc.scrollHeight - sc.clientHeight;
+  const p = max > 0 ? Math.min(1, sc.scrollTop / max) : 1;
+  $('#rBar').style.width = (p * 100).toFixed(1) + '%';
+  $('#rPct').textContent = Math.round(p * 100) + '%';
+  const y = sc.scrollTop;
+  if (Math.abs(y - R.lastY) > 24) { $('#reader').classList.toggle('hide-ui', y > R.lastY && y > 80); $('#rLookPop').hidden = true; R.lastY = y; }
+  clearTimeout(R.saveT);
+  R.saveT = setTimeout(saveReadPos, 800);
+}
+$('#rScroll').addEventListener('scroll', onReadScroll, { passive: true });
+$('#rScroll').addEventListener('click', e => {
+  if (e.target.closest('a, button')) return;
+  if (!$('#rLookPop').hidden) { $('#rLookPop').hidden = true; return; }
+  if (getSelection().toString()) return;
+  $('#reader').classList.toggle('hide-ui');
+});
+$('#rClose').append(icon('back'));
+$('#rClose').addEventListener('click', closeReader);
+$('#rInfo').append(icon('info'));
+$('#rInfo').addEventListener('click', () => R.id && openStory(R.id));
+$('#rLook').addEventListener('click', e => { e.stopPropagation(); $('#rLookPop').hidden = !$('#rLookPop').hidden; });
+$('#rLookPop').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const sc = $('#rScroll');
+  const max = sc.scrollHeight - sc.clientHeight, p = max > 0 ? sc.scrollTop / max : 0;
+  if (b.dataset.theme) pref.set('rTheme', b.dataset.theme);
+  if (b.dataset.font) pref.set('rFont', b.dataset.font);
+  if (b.dataset.size) pref.set('rSize', Math.max(13, Math.min(30, pref.get('rSize', 18) + +b.dataset.size)));
+  applyLook();
+  requestAnimationFrame(() => { sc.scrollTop = p * (sc.scrollHeight - sc.clientHeight); });
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && !$('#reader').hidden) saveReadPos(); });
+
+/* ───────────── views ───────────── */
+
+function setBar(title, { back = false, actions = [] } = {}) {
+  $('#barTitle').textContent = title;
+  const bb = $('#backBtn');
+  bb.hidden = !back;
+  put($('#barActions'), actions);
+  document.title = title === 'Callisto' ? 'Callisto' : title + ' · Callisto';
+}
+function fab(label, onclick) {
+  const b = h('button.fab', { type: 'button', on: { click: onclick } }, label);
+  b.insertAdjacentHTML('afterbegin', `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.plus}</svg>`);
+  return b;
+}
+
+function storyRow(s, { num, showU, terms, arranging } = {}) {
+  const tags = s.tags.map(id => S.tags.get(id)).filter(Boolean);
+  const pg = prog(s.id);
+  const pct = Math.round(pg.readPos * 100);
+  const meta = [showU ? uName(s.universeId) + (s.era ? ' · ' + s.era : '') : null, fmtWords(s.words), pg.status === 'reading' && pct ? pct + '% read' : null, s.author ? 'by ' + s.author : null].filter(Boolean).join(' · ');
+  const row = h('div.row' + (S.sel.has(s.id) ? '.sel' : ''), { 'data-id': s.id, role: arranging ? null : 'button', tabindex: arranging ? null : '0' },
+    arranging ? h('span.handle', { 'aria-label': 'Drag to reorder', title: 'Drag to reorder' }, icon('handle')) : null,
+    num != null ? h('span.num', num) : null,
+    h('div.body',
+      h('div.t', h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span', { style: { color: 'var(--accent)' }, 'aria-label': 'Favourite' }, '★') : null),
+      h('div.meta', meta, arranging && s.era ? h('span', ' · ' + s.era) : null),
+      s.summary || s.blurb ? h('p.sum', s.summary || s.blurb) : null,
+      tags.length ? h('div.chips', tags.slice(0, 5).map(t => h('span.chip', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 5 ? h('span.chip.plain', `+${tags.length - 5}`) : null) : null),
+    arranging ? h('label.pick', h('input', { type: 'checkbox', checked: S.sel.has(s.id), 'aria-label': 'Select ' + s.title, on: { change: e => { e.target.checked ? S.sel.add(s.id) : S.sel.delete(s.id); row.classList.toggle('sel', e.target.checked); drawBulk(); } } })) : null);
+  if (!arranging) {
+    const open = () => pref.get('tapReads', false) ? go('#/read/' + s.id) : openStory(s.id);
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  }
+  return row;
+}
+
+function viewLibrary(v) {
+  setBar('Callisto');
+  const A = isAdmin();
+  if (!A && !S.stories.size) {
+    v.append(h('div.wrap.empty',
+      h('h2', S.loadError ? 'Could not load the library' : 'Nothing to read yet'),
+      h('p', S.loadError || 'No stories have been published here yet. Come back soon.'),
+      S.loadError ? h('div.btn-row', h('button.btn.primary', { type: 'button', on: { click: async () => { await loadPublished(); render(); } } }, 'Try again')) : null));
+    return;
+  }
+  if (!S.stories.size && !S.universes.size) {
+    v.append(h('div.wrap.empty',
+      h('h2', 'Your library is empty'),
+      h('p', 'Add stories from files or Google Drive, then arrange them into universes and timelines.'),
+      h('div.btn-row',
+        h('button.btn.primary', { type: 'button', on: { click: () => $('#filePick').click() } }, 'Add files'),
+        h('button.btn', { type: 'button', on: { click: () => openDrive() } }, 'Import from Google Drive'))));
+    return;
+  }
+  const w = h('div.wrap');
+  const recent = [...S.stories.values()].filter(s => prog(s.id).status === 'reading').sort((a, b) => prog(b.id).lastRead - prog(a.id).lastRead).slice(0, 10);
+  if (recent.length) {
+    w.append(h('div.section-h', h('h2', 'Continue reading')),
+      h('div.recent', recent.map(s => h('a.card', { href: '#/read/' + s.id, css: { '--c': uColor(s.universeId) } },
+        h('h3', s.title), h('p', uName(s.universeId) + (s.era ? ' · ' + s.era : '')),
+        h('div.bar-mini', h('i', { style: { width: Math.round(prog(s.id).readPos * 100) + '%' } }))))));
+  }
+  w.append(h('div.section-h', h('h2', 'Universes'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
+  const cards = h('div.cards');
+  for (const u of universesSorted()) {
+    const list = storiesIn(u.id);
+    const unread = list.filter(s => prog(s.id).status === 'unread').length;
+    cards.append(h('a.card', { href: '#/u/' + u.id, css: { '--c': u.color } }, h('h3', u.name),
+      h('p', `${list.length} stor${list.length === 1 ? 'y' : 'ies'}${unread ? ` · ${unread} unread` : ''}${list.length ? ' · ' + fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''}`)));
+  }
+  const loose = storiesIn('');
+  if (loose.length) cards.append(h('a.card', { href: '#/u/_', css: { '--c': 'var(--ink-2)' } }, h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`)));
+  if (!cards.children.length) cards.append(h('p.muted', 'No universes yet.'));
+  w.append(cards);
+  v.append(w);
+  if (A) v.append(fab('Add', () => addFlow()));
+}
+
+function viewUniverse(v, id) {
+  const u = id === '_' ? '' : id;
+  const uni = u ? S.universes.get(u) : null;
+  if (u && !uni) { location.replace('#/'); return; }
+  const all = storiesIn(u);
+  const arranging = S.arranging;
+  const menu = () => openSheet([
+    h('h2', uName(u)),
+    h('div.menu-list',
+      h('button', { type: 'button', on: { click: () => addFlow({ u, at: null }) } }, 'Add stories here'),
+      h('button', { type: 'button', on: { click: () => { closeSheet(); summariseMany(all.filter(s => !s.summary || s.summaryStale).map(s => s.id)); } } }, `Summarise the ${all.filter(s => !s.summary || s.summaryStale).length} without a summary`),
+      all.some(s => s.source?.driveId) ? h('button', { type: 'button', on: { click: () => { closeSheet(); refreshFromDrive(all.map(s => s.id)); } } }, 'Check Google Drive for changes') : null,
+      uni ? h('button', { type: 'button', on: { click: async () => { const n = await ask({ title: 'Rename universe', input: { value: uni.name }, ok: 'Rename' }); if (n) { await saveUniverse({ ...uni, name: n }); render(); } } } }, 'Rename') : null,
+      uni ? h('button', { type: 'button', on: { click: () => colourFlow(uni) } }, 'Colour') : null,
+      uni ? h('button', {
+        type: 'button', on: {
+          click: async () => {
+            const us = universesSorted(), k = us.findIndex(x => x.id === u);
+            if (k > 0) { [us[k - 1], us[k]] = [us[k], us[k - 1]]; for (const [n, x] of us.entries()) await saveUniverse({ ...x, order: n }); }
+            closeSheet(); toast(k > 0 ? 'Moved up in the library.' : 'It is already first.');
+          },
+        },
+      }, 'Move up in the library') : null,
+      uni ? h('button.danger', {
+        type: 'button', on: {
+          click: async () => {
+            if (!await ask({ title: `Delete "${uni.name}"?`, text: `Its ${all.length} stories move to Unsorted. Nothing else is deleted.`, ok: 'Delete universe', danger: true })) return;
+            const base = storiesIn('').length;
+            await saveStories(all.map((s, k) => ({ ...s, universeId: '', pos: base + k })));
+            S.universes.delete(u); await dbDel('universes', u);
+            go('#/');
+          },
+        },
+      }, 'Delete universe') : null),
+  ]);
+  const A = isAdmin();
+  setBar(uName(u), {
+    back: true,
+    actions: !A ? [] : [
+      arranging ? h('button.btn.small.primary', { type: 'button', on: { click: () => { S.arranging = false; S.sel.clear(); render(); } } }, 'Done')
+        : iconBtn('arrange', 'Arrange the timeline', () => { S.arranging = true; S.sel.clear(); render(); }),
+      iconBtn('more', 'More', menu),
+    ],
+  });
+  const w = h('div.wrap');
+  if (!all.length) {
+    w.append(A ? h('div.empty', h('h2', 'No stories here yet'), h('p', 'Add stories, or move some here from another universe.'), h('div.btn-row', h('button.btn.primary', { type: 'button', on: { click: () => addFlow({ u }) } }, 'Add stories'))) : h('div.empty', h('h2', 'No stories here yet')));
+    v.append(w);
+    return;
+  }
+  const words = all.reduce((n, s) => n + s.words, 0);
+  w.append(h('p.muted.small', { style: { margin: '0 0 12px' } }, `${all.length} stor${all.length === 1 ? 'y' : 'ies'} · ${fmtWords(words)} · ${all.filter(s => prog(s.id).status === 'read').length} read`));
+  let shown = all;
+  if (!arranging) {
+    const used = new Map();
+    for (const s of all) for (const t of s.tags) used.set(t, (used.get(t) || 0) + 1);
+    const tagList = [...used.keys()].map(id => S.tags.get(id)).filter(Boolean).sort((a, b) => used.get(b.id) - used.get(a.id) || collator.compare(a.name, b.name));
+    const f = S.filter;
+    w.append(h('div.filters',
+      h('button.chip.plain' + (f.unread ? '.on' : ''), { type: 'button', on: { click: () => { f.unread = !f.unread; render(); } } }, 'Unread'),
+      tagList.map(t => h('button.chip' + (f.tags.has(t.id) ? '.on' : ''), { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => { f.tags.has(t.id) ? f.tags.delete(t.id) : f.tags.add(t.id); render(); } } }, t.name))));
+    shown = all.filter(s => (!f.unread || prog(s.id).status !== 'read') && [...f.tags].every(t => !S.tags.has(t) || s.tags.includes(t)));
+    if (!shown.length) w.append(h('p.muted', 'No stories match these filters.'));
+  } else {
+    w.append(h('p.hint', { style: { margin: '0 0 12px' } }, 'Drag ', h('b', '⠿'), ' to reorder. Tick stories to move, tag or set the era of several at once.'));
+  }
+  const list = h('div.list' + (arranging ? '.arranging' : ''));
+  let lastEra = null;
+  for (const s of shown) {
+    const n = all.indexOf(s) + 1;
+    if (!arranging && u && (s.era || '') !== (lastEra ?? '') && s.era) list.append(h('div.era', s.era));
+    lastEra = s.era || '';
+    list.append(storyRow(s, { num: u ? n : null, arranging }));
+  }
+  w.append(list);
+  v.append(w);
+  if (arranging) { wireDrag(list, u); drawBulk(); }
+  else if (A) v.append(fab('Add', () => addFlow({ u })));
+}
+
+function colourFlow(uni) {
+  openSheet([
+    h('h2', 'Colour'),
+    h('div.chips', PALETTE.map(c => h('button.chip' + (uni.color === c ? '.on' : ''), { type: 'button', css: { '--c': c }, 'aria-label': c, on: { click: async () => { await saveUniverse({ ...uni, color: c }); closeSheet(); render(); } } }, ' '))),
+  ]);
+}
+
+function drawBulk() {
+  document.querySelector('.bulk')?.remove();
+  if (!S.arranging) return;
+  const u = S.route.id === '_' ? '' : S.route.id;
+  const ids = () => storiesIn(u).filter(s => S.sel.has(s.id)).map(s => s.id);
+  const n = S.sel.size;
+  const all = storiesIn(u);
+  const bar = h('div.bulk',
+    h('span.n', n ? `${n} selected` : 'None selected'),
+    h('button.btn.small', { type: 'button', on: { click: () => { if (S.sel.size === all.length) S.sel.clear(); else all.forEach(s => S.sel.add(s.id)); render(); } } }, S.sel.size === all.length ? 'Select none' : 'Select all'),
+    h('button.btn.small', { type: 'button', disabled: !n, on: { click: () => pickPlace(ids(), async (to, at) => { await placeStories(ids(), to, at); S.sel.clear(); render(); toast('Moved.'); }) } }, 'Move…'),
+    h('button.btn.small', { type: 'button', disabled: !n, on: { click: () => pickTags(ids()) } }, 'Tags…'),
+    h('button.btn.small', {
+      type: 'button', disabled: !n, on: {
+        click: async () => {
+          const eras = [...new Set(all.map(x => x.era).filter(Boolean))];
+          const v = await askEra(eras, '');
+          if (v === null) return;
+          await saveStories(ids().map(id => ({ ...S.stories.get(id), era: v })));
+          render();
+        },
+      },
+    }, 'Era…'),
+    h('button.btn.small', { type: 'button', disabled: !n, on: { click: () => summariseMany(ids()) } }, 'Summarise'),
+    h('button.btn.small.danger', {
+      type: 'button', disabled: !n, on: {
+        click: async () => {
+          if (!await ask({ title: `Remove ${n} stor${n === 1 ? 'y' : 'ies'}?`, text: 'They leave Callisto on this device. The original files are not touched.', ok: 'Remove', danger: true })) return;
+          await deleteStories(ids()); S.sel.clear(); render();
+        },
+      },
+    }, 'Remove'));
+  document.body.append(bar);
+}
+
+// Drag to reorder: pointer events on the handle, live reordering, auto-scroll near the edges.
+function wireDrag(list, u) {
+  const view = $('#view');
+  let drag = null;
+  const place = () => {
+    if (!drag) return;
+    const { row, y } = drag;
+    const rows = [...list.querySelectorAll('.row')].filter(r => r !== row);
+    const before = rows.find(r => { const b = r.getBoundingClientRect(); return y < b.top + b.height / 2; });
+    if (before) { if (row.nextElementSibling !== before) list.insertBefore(row, before); }
+    else if (list.lastElementChild !== row) list.append(row);
+    row.style.transform = 'none';
+    const top = row.getBoundingClientRect().top;
+    row.style.transform = `translateY(${y - drag.grab - top}px)`;
+  };
+  const tick = () => {
+    if (!drag) return;
+    const b = view.getBoundingClientRect();
+    const edge = 70;
+    let dy = 0;
+    if (drag.y < b.top + edge) dy = -Math.ceil((b.top + edge - drag.y) / 6);
+    else if (drag.y > b.bottom - edge) dy = Math.ceil((drag.y - (b.bottom - edge)) / 6);
+    if (dy) { view.scrollTop += dy; place(); }
+    drag.raf = requestAnimationFrame(tick);
+  };
+  list.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('.handle');
+    if (!handle || e.button > 0) return;
+    e.preventDefault();
+    const row = handle.closest('.row');
+    const r = row.getBoundingClientRect();
+    drag = { row, grab: e.clientY - r.top, y: e.clientY, id: e.pointerId };
+    handle.setPointerCapture(e.pointerId);
+    row.classList.add('dragging');
+    drag.raf = requestAnimationFrame(tick);
+  });
+  list.addEventListener('pointermove', e => { if (!drag || e.pointerId !== drag.id) return; drag.y = e.clientY; place(); });
+  const end = async e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    cancelAnimationFrame(drag.raf);
+    drag.row.classList.remove('dragging');
+    drag.row.style.transform = '';
+    drag = null;
+    const ids = [...list.querySelectorAll('.row')].map(r => r.dataset.id);
+    const before = storiesIn(u).map(s => s.id);
+    if (ids.join() !== before.join()) { await setOrder(u, ids); render(); }
+  };
+  list.addEventListener('pointerup', end);
+  list.addEventListener('pointercancel', end);
+}
+
+function viewSearch(v) {
+  setBar('Search');
+  const w = h('div.wrap');
+  const input = h('input.field', { type: 'search', value: S.searchQ, placeholder: 'Search titles, tags, summaries and text', 'aria-label': 'Search', enterkeyhint: 'search' });
+  const results = h('div.list');
+  const aiBtn = h('button.btn.small', { type: 'button', hidden: !isAdmin() || !pref.get('aiKey', '') }, icon('sparkle'), 'Ask Claude');
+  const quick = h('div.filters',
+    [['is:unread', 'Unread'], ['is:reading', 'Reading'], ['is:fav', 'Favourites'], ...(isAdmin() ? [['no:summary', 'No summary'], ['no:tags', 'No tags']] : []), ['words:<3000', 'Under 3k words']].map(([q, label]) =>
+      h('button.chip.plain' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, label)),
+    universesSorted().map(u => { const q = `in:"${u.name}"`; return h('button.chip' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, css: { '--c': u.color }, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, u.name); }));
+  const hint = h('p.hint', 'Try ', ...['tag:angst', 'in:"Star Wars"', 'character:anna', 'era:"year 2"', '-tag:wip', 'words:1k-5k', '"exact phrase"'].flatMap((x, k) => [k ? ' ' : '', h('code', x)]), '. Typos in titles and tags are forgiven.');
+  w.append(h('div.search-box', input, h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' } }, aiBtn)), quick, results);
+  v.append(w);
+  const run = async () => {
+    S.searchQ = input.value;
+    S.ai = null;
+    if (!S.allTexts) { results.replaceChildren(h('p.muted.small', 'Indexing your library…')); await loadAllTexts(); }
+    quick.querySelectorAll('button').forEach(b => b.classList.toggle('on', input.value.includes(b.dataset.q)));
+    const q = input.value.trim();
+    if (!q) { put(results, hint, S.stories.size ? null : h('p.muted', 'Your library is empty.')); return; }
+    const r = search(q);
+    results.replaceChildren(h('p.muted.small', { style: { margin: '0 0 4px' } }, `${r.length} result${r.length === 1 ? '' : 's'}`),
+      ...r.slice(0, 200).map(({ s, terms }) => {
+        const row = storyRow(s, { showU: true, terms });
+        const sn = terms.length ? snippet(s, terms) : null;
+        if (sn) row.querySelector('.body').append(h('p.snip', sn));
+        return row;
+      }));
+  };
+  input.addEventListener('input', debounce(run, 160));
+  aiBtn.addEventListener('click', async () => {
+    const q = input.value.trim();
+    if (!q) return toast('Type a question first, such as "the one where they get snowed in".');
+    aiBtn.disabled = true;
+    results.replaceChildren(h('p.muted.small', 'Asking Claude…'));
+    try {
+      const r = await aiSearch(q);
+      const found = r.ids.map(id => S.stories.get(id)).filter(Boolean);
+      results.replaceChildren(h('div.ai-note', r.note), ...found.map(s => storyRow(s, { showU: true })));
+    } catch (e) { results.replaceChildren(h('p.small', { style: { color: 'var(--danger)' } }, aiError(e))); }
+    aiBtn.disabled = false;
+  });
+  run();
+  if (!S.searchQ) setTimeout(() => input.focus(), 50);
+}
+
+function viewTags(v) {
+  const A = isAdmin();
+  setBar('Tags', { actions: A ? [h('button.btn.small', { type: 'button', on: { click: newTagFlow } }, '+ New tag')] : [] });
+  const w = h('div.wrap');
+  if (!S.tags.size) {
+    w.append(A ? h('div.empty', h('h2', 'No tags yet'), h('p', 'Tags can be characters, pairings, genres, tropes, moods or anything else. Add them from a story, or make some here.'), h('div.btn-row', h('button.btn.primary', { type: 'button', on: { click: newTagFlow } }, 'New tag'))) : h('div.empty', h('h2', 'No tags yet')));
+    v.append(w); return;
+  }
+  for (const g of groups()) {
+    const ts = tagsSorted().filter(t => (t.group || 'Other') === g);
+    if (!ts.length) continue;
+    w.append(h('div.tag-group', h('div.section-h', h('h2', g)),
+      ts.map(t => h('div.tag-line', { role: 'button', tabindex: '0', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id), keydown: e => { if (e.key === 'Enter') go('#/tag/' + t.id); } } },
+        h('span.sw'), h('span', t.name), h('span.n', tagUse(t.id))))));
+  }
+  v.append(w);
+}
+
+async function newTagFlow() {
+  const sel = h('select.field', { style: { marginTop: '10px' } }, groups().map(g => h('option', { value: g }, g)));
+  sel.value = 'Character';
+  const name = await ask({ title: 'New tag', input: { placeholder: 'Name' }, extra: sel, ok: 'Create' });
+  if (name) { await findOrMakeTag(name, sel.value); render(); }
+}
+
+function viewTag(v, id) {
+  const t = S.tags.get(id);
+  if (!t) { location.replace('#/tags'); return; }
+  const manage = () => openSheet([
+    h('h2', t.name), h('p.sub', t.group),
+    h('div.menu-list',
+      h('button', { type: 'button', on: { click: async () => { const n = await ask({ title: 'Rename tag', input: { value: t.name }, ok: 'Rename' }); if (n) { await saveTag({ ...t, name: n }); render(); } } } }, 'Rename'),
+      h('button', {
+        type: 'button', on: {
+          click: async () => {
+            const sel = h('select.field', groups().map(g => h('option', { value: g }, g)));
+            sel.value = t.group || 'Other';
+            const custom = h('input.field', { type: 'text', placeholder: 'Or a new group name', style: { marginTop: '10px' } });
+            if (await ask({ title: 'Group', extra: [sel, custom], ok: 'Save' })) { await saveTag({ ...t, group: custom.value.trim() || sel.value, color: undefined }); render(); }
+          },
+        },
+      }, 'Change group'),
+      h('button', {
+        type: 'button', on: {
+          click: async () => {
+            const sel = h('select.field', tagsSorted().filter(x => x.id !== t.id).map(x => h('option', { value: x.id }, `${x.name} (${x.group})`)));
+            if (!sel.options.length) return toast('There is no other tag to merge into.');
+            if (!await ask({ title: `Merge "${t.name}" into…`, text: 'Every story with this tag gets the other one instead, and this tag goes.', extra: sel, ok: 'Merge' })) return;
+            const into = sel.value;
+            await saveStories([...S.stories.values()].filter(s => s.tags.includes(t.id)).map(s => ({ ...s, tags: [...new Set(s.tags.map(x => x === t.id ? into : x))] })));
+            S.tags.delete(t.id); await dbDel('tags', t.id);
+            go('#/tag/' + into);
+          },
+        },
+      }, 'Merge into another tag'),
+      h('button.danger', {
+        type: 'button', on: {
+          click: async () => {
+            if (!await ask({ title: `Delete "${t.name}"?`, text: `It comes off ${tagUse(t.id)} stories. The stories stay.`, ok: 'Delete tag', danger: true })) return;
+            await saveStories([...S.stories.values()].filter(s => s.tags.includes(t.id)).map(s => ({ ...s, tags: s.tags.filter(x => x !== t.id) })));
+            S.tags.delete(t.id); await dbDel('tags', t.id);
+            go('#/tags');
+          },
+        },
+      }, 'Delete tag')),
+  ]);
+  setBar(t.name, { back: true, actions: isAdmin() ? [iconBtn('more', 'Manage tag', manage)] : [] });
+  const w = h('div.wrap', h('p.muted.small', { style: { margin: '0 0 12px' } }, `${t.group || 'Other'} · ${tagUse(t.id)} stories`));
+  const list = [...S.stories.values()].filter(s => s.tags.includes(t.id));
+  const byU = new Map();
+  for (const s of list) { if (!byU.has(s.universeId || '')) byU.set(s.universeId || '', []); byU.get(s.universeId || '').push(s); }
+  for (const u of [...universesSorted().map(x => x.id), '']) {
+    const ss = byU.get(u);
+    if (!ss) continue;
+    ss.sort((a, b) => a.pos - b.pos);
+    w.append(h('div.section-h', h('h2', uName(u))), h('div.list', ss.map(s => storyRow(s, { num: u ? storiesIn(u).indexOf(s) + 1 : null }))));
+  }
+  if (!list.length) w.append(h('p.muted', 'No stories have this tag yet.'));
+  v.append(w);
+}
+
+function viewSettings(v) {
+  setBar('Settings');
+  const w = h('div.wrap');
+  const A = isAdmin();
+  if (A) {
+    const dirty = pref.get('dirtyAt', 0), base = pref.get('pubBase', '');
+    w.append(h('section.panel',
+      h('h2', 'Publishing'),
+      h('p', `Manager mode is on. Readers see what was last published${base ? ` (${new Date(base).toLocaleString()})` : ''}. ${dirty ? 'This device has changes that are not published yet.' : 'Everything on this device is published.'}`),
+      h('div.btn-row',
+        h('button.btn.small.primary', { type: 'button', on: { click: publish } }, 'Publish now'),
+        h('button.btn.small', {
+          type: 'button', on: {
+            click: async () => {
+              if (dirty && !await ask({ title: 'Load the published library?', text: 'This replaces the copy on this device, including changes that are not published yet.', ok: 'Replace with the published one', danger: true })) return;
+              try { toast('Loading the published library…', null, 0); await pullPublished(); toast('Loaded.'); render(); } catch (e) { toast(e.message, null, 6000); }
+            },
+          },
+        }, 'Load the published library'),
+        h('button.btn.small', { type: 'button', on: { click: leaveManager } }, 'Leave manager mode'))));
+  }
+  const signed = G.valid() || pref.get('signedIn', false);
+  if (A) w.append(h('section.panel',
+    h('h2', 'Google Drive'),
+    h('p', signed ? `Signed in${pref.get('googleEmail', '') ? ' as ' + pref.get('googleEmail', '') : ''}. Callisto reads your files and never changes them.` : 'Sign in to import Google Docs, Word and text files from your Drive.'),
+    h('div.btn-row',
+      signed ? h('button.btn.small', { type: 'button', on: { click: () => openDrive() } }, 'Import from Drive') : h('button.btn.small.primary', { type: 'button', on: { click: async () => { try { await signIn('settings'); render(); } catch (e) { toast(e.message); } } } }, 'Sign in with Google'),
+      [...S.stories.values()].some(s => s.source?.driveId) ? h('button.btn.small', { type: 'button', on: { click: () => refreshFromDrive([...S.stories.values()].map(s => s.id)) } }, 'Check all for changes') : null,
+      signed ? h('button.btn.small', { type: 'button', on: { click: () => { signOut(); render(); } } }, 'Sign out') : null)));
+
+  const key = h('input.field', { type: 'password', value: pref.get('aiKey', ''), placeholder: 'sk-ant-…', autocomplete: 'off', spellcheck: false });
+  const model = h('select.field', MODELS.map(([id, label]) => h('option', { value: id }, label)));
+  model.value = pref.get('aiModel', MODELS[0][0]);
+  const spoil = h('select.field', h('option', { value: 'light' }, 'No spoilers: leave out the ending'), h('option', { value: 'full' }, 'Full: include the ending'));
+  spoil.value = pref.get('aiSpoilers', 'light');
+  key.addEventListener('change', () => { pref.set('aiKey', key.value.trim()); render(); });
+  model.addEventListener('change', () => pref.set('aiModel', model.value));
+  spoil.addEventListener('change', () => pref.set('aiSpoilers', spoil.value));
+  const missing = [...S.stories.values()].filter(s => !s.summary || s.summaryStale);
+  if (A) w.append(h('section.panel',
+    h('h2', 'Claude summaries'),
+    h('p', 'Claude writes a short summary of each story and suggests tags, and can search your library by meaning. It needs your own API key from console.anthropic.com. The key is kept on this device only, and use is billed to your Anthropic account.'),
+    h('label', 'API key'), key,
+    h('label', 'Model'), model,
+    h('label', 'Summaries'), spoil,
+    h('div.btn-row', { style: { marginTop: '14px' } },
+      h('button.btn.small', { type: 'button', disabled: !pref.get('aiKey', '') || !missing.length, on: { click: () => summariseMany(missing.map(s => s.id)) } }, `Summarise the ${missing.length} without one`))));
+
+  const tapReads = h('input', { type: 'checkbox', checked: pref.get('tapReads', false), on: { change: e => pref.set('tapReads', e.target.checked) } });
+  const theme = h('select.field', h('option', { value: '' }, 'Match the device'), h('option', { value: 'light' }, 'Light'), h('option', { value: 'dark' }, 'Dark'));
+  theme.value = pref.get('theme', '');
+  theme.addEventListener('change', () => { pref.set('theme', theme.value); applyTheme(); });
+  w.append(h('section.panel',
+    h('h2', 'Reading'),
+    h('label.check', tapReads, 'Tapping a story opens it to read (details stay under ⓘ in the reader)'),
+    h('label', 'App colours'), theme,
+    h('p', { style: { margin: '12px 0 0' } }, 'Text size, typeface and page colour are under Aa while reading.')));
+
+  const usage = h('span');
+  navigator.storage?.estimate?.().then(e => { usage.textContent = ` Using ${(e.usage / 1048576).toFixed(1)} MB on this device.`; });
+  if (A) w.append(h('section.panel',
+    h('h2', 'Working copy'),
+    h('p', `${S.stories.size} stories, ${S.universes.size} universes, ${S.tags.size} tags on this device.`, usage),
+    h('div.btn-row',
+      h('button.btn.small', { type: 'button', on: { click: downloadBackup } }, 'Download a backup'),
+      h('button.btn.small', { type: 'button', on: { click: () => $('#backupPick').click() } }, 'Restore a backup'))));
+
+  const ver = h('span', '…');
+  navigator.serviceWorker?.controller?.postMessage('version');
+  S.onVersion = x => { ver.textContent = x; };
+  w.append(h('section.panel', h('h2', 'Callisto'), h('p', 'Version ', ver, '. Works offline once opened.'),
+    h('div.btn-row', h('button.btn.small', { type: 'button', on: { click: checkUpdate } }, 'Check for updates'))));
+  if (!A) w.append(h('section.panel', h('h2', 'Manage the library'), h('p', 'Only for the person who runs this library.'), h('div.btn-row', h('button.btn.small', { type: 'button', on: { click: managerFlow } }, 'Manager sign-in'))));
+  v.append(w);
+}
+
+/* ───────────── backup ───────────── */
+
+async function downloadBackup() {
+  const data = { app: 'callisto', v: 1, at: new Date().toISOString(), universes: await dbAll('universes'), tags: await dbAll('tags'), stories: await dbAll('stories'), texts: await dbAll('texts') };
+  const blob = await new Response(new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
+  const a = h('a', { href: URL.createObjectURL(blob), download: `Callisto backup ${new Date().toISOString().slice(0, 10)}.json.gz` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$('#backupPick').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try {
+    const head = new Uint8Array(await f.slice(0, 2).arrayBuffer());
+    const text = head[0] === 0x1f && head[1] === 0x8b ? await new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text() : await f.text();
+    data = JSON.parse(text);
+    if (data.app !== 'callisto') throw new Error();
+  } catch { return toast('That is not a Callisto backup.'); }
+  if (!await ask({ title: 'Restore this backup?', text: `It has ${data.stories.length} stories from ${fmtDate(data.at)}. It replaces everything in Callisto on this device.`, ok: 'Replace and restore', danger: true })) return;
+  for (const s of STORES) if (s !== 'kv') await dbClear(s);
+  await Promise.all([dbPut('universes', data.universes), dbPut('tags', data.tags), dbPut('stories', data.stories), dbPut('texts', data.texts)]);
+  S.texts.clear(); S.allTexts = false;
+  await loadAll();
+  toast('Backup restored.');
+  go('#/');
+});
+
+/* ───────────── router ───────────── */
+
+function parseRoute() {
+  const p = location.hash.replace(/^#\/?/, '').split('/');
+  switch (p[0]) {
+    case 'u': return { name: 'universe', id: p[1] || '_' };
+    case 'search': return { name: 'search' };
+    case 'tags': return { name: 'tags' };
+    case 'tag': return { name: 'tag', id: p[1] };
+    case 'settings': return { name: 'settings' };
+    case 'read': return { name: 'read', id: p[1] };
+    default: return { name: 'library' };
+  }
+}
+function render() {
+  const v = $('#view');
+  const y = S.route.name === S.lastView?.name && S.route.id === S.lastView?.id ? v.scrollTop : 0;
+  document.querySelector('.bulk')?.remove();
+  v.replaceChildren();
+  const r = S.route;
+  if (r.name === 'library') viewLibrary(v);
+  else if (r.name === 'universe') viewUniverse(v, r.id);
+  else if (r.name === 'search') viewSearch(v);
+  else if (r.name === 'tags') viewTags(v);
+  else if (r.name === 'tag') viewTag(v, r.id);
+  else if (r.name === 'settings') viewSettings(v);
+  if (isAdmin() && pref.get('dirtyAt', 0)) v.prepend(publishStrip());
+  const tab = { library: 'library', universe: 'library', search: 'search', tags: 'tags', tag: 'tags', settings: 'settings' }[r.name];
+  document.querySelectorAll('.tabs a').forEach(a => { a.classList.toggle('on', a.dataset.tab === tab); a.toggleAttribute('aria-current', a.dataset.tab === tab); });
+  v.scrollTop = y;
+  S.lastView = { name: r.name, id: r.id };
+}
+const rerenderSoon = debounce(() => { if (S.route.name !== 'search') render(); }, 50);
+
+function route() {
+  const r = parseRoute();
+  if (r.name === 'read') {
+    if (!S.lastView) { S.route = { name: 'library' }; render(); }
+    openReader(r.id);
+    return;
+  }
+  if (!$('#reader').hidden) { saveReadPos(); $('#reader').hidden = true; R.id = null; }
+  if (r.name !== 'universe' || r.id !== S.route.id) { S.arranging = false; S.sel.clear(); if (r.id !== S.route.id) S.filter = { tags: new Set(), unread: false }; }
+  S.importPreset = null;
+  S.route = r;
+  render();
+}
+window.addEventListener('hashchange', () => { S.cameFromApp = true; route(); });
+$('#backBtn').append(icon('back'));
+$('#backBtn').addEventListener('click', () => { if (S.cameFromApp) history.back(); else location.hash = S.route.name === 'tag' ? '#/tags' : '#/'; });
+document.querySelectorAll('.tabs .ico').forEach(s => { s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[s.dataset.icon]}</svg>`; });
+
+function applyTheme() {
+  const t = pref.get('theme', '');
+  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+}
+
+/* ───────────── updates (service worker) ───────────── */
+
+async function checkUpdate() {
+  const reg = await navigator.serviceWorker?.getRegistration();
+  if (!reg) return toast('Updates need the app to be served over https.');
+  await reg.update();
+  toast('Checking… If a new version is found, it loads next time you open Callisto.', { label: 'Reload now', run: () => location.reload() });
+}
+
+/* ───────────── start ───────────── */
+
+(async function start() {
+  applyTheme();
+  const after = signInReturn();
+  try { if (isAdmin()) await loadAll(); else await loadPublished(); }
+  catch (e) { document.body.replaceChildren(h('p', { style: { padding: '20px' } }, 'Callisto could not open its storage: ' + e.message)); return; }
+  navigator.storage?.persist?.();
+  route();
+  if (after === 'drive') openDrive();
+  else if (after === 'settings' || after === 'signed-in') toast('Signed in to Google.');
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('message', e => { if (e.data?.version) S.onVersion?.(e.data.version.replace('callisto-shell-', 'v')); });
+  }
+})();

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Callisto</title>
+<meta name="description" content="A reading app for a collection of stories, arranged by universe and timeline.">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16151a" media="(prefers-color-scheme: dark)">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <button class="icon-btn" id="backBtn" aria-label="Back" hidden></button>
+    <h1 id="barTitle">Callisto</h1>
+    <div class="bar-actions" id="barActions"></div>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/" data-tab="library"><span class="ico" data-icon="library"></span><span>Library</span></a>
+    <a href="#/search" data-tab="search"><span class="ico" data-icon="search"></span><span>Search</span></a>
+    <a href="#/tags" data-tab="tags"><span class="ico" data-icon="tag"></span><span>Tags</span></a>
+    <a href="#/settings" data-tab="settings"><span class="ico" data-icon="gear"></span><span>Settings</span></a>
+  </nav>
+</div>
+
+<section id="reader" class="reader" hidden aria-label="Reader">
+  <div class="r-top">
+    <button class="icon-btn" id="rClose" aria-label="Close"></button>
+    <div class="r-title" id="rTitle"></div>
+    <button class="icon-btn" id="rInfo" aria-label="Story details"></button>
+    <button class="icon-btn" id="rLook" aria-label="Text settings">Aa</button>
+  </div>
+  <div class="r-scroll" id="rScroll" tabindex="-1">
+    <article class="r-page" id="rPage"></article>
+    <div class="r-end" id="rEnd"></div>
+  </div>
+  <div class="r-bottom">
+    <div class="r-progress"><div id="rBar"></div></div>
+    <span id="rPct">0%</span>
+  </div>
+  <div class="r-look" id="rLookPop" hidden>
+    <div class="r-row" role="group" aria-label="Theme">
+      <button data-theme="sepia">Sepia</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button><button data-theme="black">Black</button>
+    </div>
+    <div class="r-row" role="group" aria-label="Typeface">
+      <button data-font="serif">Serif</button><button data-font="sans">Sans</button>
+    </div>
+    <div class="r-row" role="group" aria-label="Text size">
+      <button data-size="-1" aria-label="Smaller text">A−</button><span id="rSize">18</span><button data-size="1" aria-label="Larger text">A+</button>
+    </div>
+  </div>
+</section>
+
+<div class="sheet-wrap" id="sheetWrap" hidden>
+  <div class="sheet-back" id="sheetBack"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<input type="file" id="filePick" multiple hidden
+  accept=".txt,.text,.md,.markdown,.html,.htm,.xhtml,.docx,.odt,.rtf,.epub,text/plain,text/html,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,application/epub+zip">
+<input type="file" id="backupPick" hidden accept=".json,.gz,application/json,application/gzip">
+
+<script src="app.js"></script>
+</body>
+</html>
