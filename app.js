@@ -175,10 +175,10 @@ async function loadAllTexts() {
   if (S.allTexts) return;
   if (isAdmin()) { for (const t of await dbAll('texts')) S.texts.set(t.id, t); S.allTexts = true; return; }
   S.textsLoading ||= (async () => {
-    const r = await fetch(DATA + 'texts.json?v=' + encodeURIComponent(S.published || ''), { cache: 'no-cache' });
-    if (!r.ok) throw new Error('Could not load the stories (' + r.status + ').');
-    for (const [id, html] of Object.entries(await r.json())) S.texts.set(id, { id, html, plain: plainOf(html) });
-    S.allTexts = true;
+    // The device copy first; the network only when this version is not downloaded yet.
+    let texts = (await dbGet('kv', 'publishedTexts').catch(() => null));
+    texts = texts?.v === S.published ? texts.texts : await fetchTexts(S.published);
+    fillTexts(texts);
   })().finally(() => { S.textsLoading = null; });
   return S.textsLoading;
 }
@@ -188,9 +188,10 @@ async function loadAllTexts() {
 // Readers see the library published to the site (data/library.json and data/texts.json).
 // Laura's manager mode keeps a working copy on her device and publishes it to the site's GitHub repo.
 const DATA = 'data/';
-const REPO_DEFAULT = 'tom-dandm/callisto-launcher';
-function isAdmin() { return pref.get('admin', false) && !!pref.get('ghToken', ''); }
-const repo = () => pref.get('ghRepo', REPO_DEFAULT);
+// The publishing script (tools/manager-script.gs, a Google Apps Script web app running as Tom).
+// It holds the GitHub token; the app only sends the manager's Google sign-in.
+const CONFIG = { managerUrl: 'https://script.google.com/macros/s/AKfycbxyLoeHb97Eex3dPntMRmk6a8AhVIdhuyU2HwotGGqeukuKRxSED_JPLmYN5TunJj6E/exec' };
+function isAdmin() { return pref.get('admin', false); }
 
 function setLibrary(lib) {
   S.stories = new Map((lib?.stories || []).map(x => [x.id, x]));
@@ -199,51 +200,90 @@ function setLibrary(lib) {
   S.texts.clear(); S.allTexts = false;
   S.published = lib?.publishedAt || '';
 }
+function fillTexts(texts) {
+  for (const [id, html] of Object.entries(texts || {})) S.texts.set(id, { id, html, plain: plainOf(html) });
+  S.allTexts = true;
+}
+async function fetchTexts(v) {
+  const r = await fetch(DATA + 'texts.json?v=' + encodeURIComponent(v || ''), { cache: 'no-cache' });
+  if (!r.ok) throw new Error('Could not load the stories (' + r.status + ').');
+  const texts = await r.json();
+  await dbPut('kv', { id: 'publishedTexts', v, texts });
+  return texts;
+}
+
+// Readers work from the copy downloaded to this device (IndexedDB) and check the site for a newer
+// version whenever they can. The first visit needs the network; after that, offline is normal.
 async function loadPublished() {
   S.loadError = '';
+  const saved = await dbGet('kv', 'published').catch(() => null);
+  if (saved?.lib) { setLibrary(saved.lib); refreshPublished(); return; }
+  setLibrary(null);
+  await refreshPublished(true);
+}
+let refreshing = null;
+function refreshPublished(first) {
+  return refreshing ||= (async () => {
+    try {
+      const r = await fetch(DATA + 'library.json', { cache: 'no-cache' });
+      if (r.status === 404) return;
+      if (!r.ok) throw new Error('The library could not be loaded (' + r.status + ').');
+      const lib = await r.json();
+      pref.set('checkedAt', Date.now());
+      if (lib.publishedAt === S.published) return;
+      // Download every story before switching, so the new version is complete offline.
+      const texts = await fetchTexts(lib.publishedAt);
+      await dbPut('kv', { id: 'published', lib });
+      const had = S.stories.size;
+      setLibrary(lib);
+      fillTexts(texts);
+      S.loadError = '';
+      if (!first) { if (had) toast('The library has been updated.'); rerenderSoon(); }
+    } catch (e) {
+      if (first && !S.stories.size) S.loadError = /fetch/i.test(e.message) ? 'The library could not be loaded. Are you online?' : e.message;
+    } finally { refreshing = null; }
+  })();
+}
+
+// While open: readers look for a newer library, the manager for edited Google Docs.
+// Quietly, at most every few minutes, and never in the way of reading offline.
+function backgroundChecks() {
+  if (!navigator.onLine || document.hidden) return;
+  if (!isAdmin()) {
+    if (Date.now() - pref.get('checkedAt', 0) > 5 * 60000) refreshPublished();
+    return;
+  }
+  if (G.valid() && Date.now() - pref.get('driveCheckedAt', 0) > 30 * 60000 && [...S.stories.values()].some(s => s.source?.driveId)) {
+    pref.set('driveCheckedAt', Date.now());
+    refreshFromDrive([...S.stories.keys()], false, true);
+  }
+}
+window.addEventListener('online', () => { pref.del('checkedAt'); pref.del('driveCheckedAt'); backgroundChecks(); });
+document.addEventListener('visibilitychange', backgroundChecks);
+setInterval(backgroundChecks, 60000);
+
+// Calls the publishing script with the manager's Google sign-in. Signs in first if needed
+// (on a phone that leaves the page; `after` says what to carry on with when it comes back).
+async function managerCall(action, extra = {}, after = 'manager') {
+  if (!/^https:/.test(CONFIG.managerUrl)) throw new Error('Publishing is not set up yet.');
+  if (!G.valid()) await signIn(after);
+  let r;
   try {
-    const r = await fetch(DATA + 'library.json', { cache: 'no-cache' });
-    if (r.status === 404) return setLibrary(null);
-    if (!r.ok) throw new Error('The library could not be loaded (' + r.status + ').');
-    setLibrary(await r.json());
-    loadAllTexts().catch(() => {});
-  } catch (e) {
-    setLibrary(null);
-    S.loadError = /fetch/i.test(e.message) ? 'The library could not be loaded. Are you online?' : e.message;
-  }
-}
-
-async function gh(method, path, body, raw) {
-  const r = await fetch('https://api.github.com' + path, {
-    method,
-    headers: {
-      Authorization: 'Bearer ' + pref.get('ghToken', ''), 'X-GitHub-Api-Version': '2022-11-28',
-      Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
-      ...(body && { 'Content-Type': 'application/json' }),
-    },
-    body: body && JSON.stringify(body),
-  }).catch(() => { throw new Error('Could not reach GitHub. Are you online?'); });
-  if (raw && r.status === 404) return null;
-  if (!r.ok) {
-    let m = r.statusText; try { m = (await r.json()).message; } catch {}
-    const msg = r.status === 401 ? 'GitHub did not accept the token.'
-      : r.status === 403 ? 'This token is not allowed to change the site. It needs Contents: Read and write on the repo.'
-        : r.status === 404 ? 'The repo was not found, or the token cannot see it.' : `GitHub: ${m}`;
-    throw Object.assign(new Error(msg), { status: r.status });
-  }
-  return raw ? r.text() : r.json();
-}
-
-// Reads the published library straight from the repo (fresher than the site, which lags a minute).
-async function remoteLibrary() {
-  const t = await gh('GET', `/repos/${repo()}/contents/${DATA}library.json`, null, true);
-  return t ? JSON.parse(t) : null;
+    r = await fetch(CONFIG.managerUrl, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, googleToken: G.token, ...extra }),
+    });
+  } catch { throw new Error('Could not reach the publishing service. Are you online?'); }
+  const j = await r.json().catch(() => ({ error: 'The publishing service sent back something unreadable.' }));
+  if (j.error) { if (/expired/i.test(j.error)) dropToken(); throw new Error(j.error); }
+  return j;
 }
 
 // Replaces the working copy on this device with what is published.
 async function pullPublished() {
-  const lib = await remoteLibrary();
-  const texts = lib ? JSON.parse(await gh('GET', `/repos/${repo()}/contents/${DATA}texts.json`, null, true) || '{}') : {};
+  const r = await managerCall('pull');
+  const lib = r.library ? JSON.parse(r.library) : null;
+  const texts = r.texts ? JSON.parse(r.texts) : {};
   S.quiet = true;
   try {
     for (const st of STORES) if (st !== 'kv') await dbClear(st);
@@ -265,35 +305,22 @@ async function publish() {
   publishing = true;
   try {
     toast('Publishing…', null, 0);
-    const r = repo();
-    const remote = await remoteLibrary();
-    if (remote && remote.publishedAt !== pref.get('pubBase', '')) {
+    const publishedAt = new Date().toISOString();
+    const lib = { app: 'callisto', v: 1, publishedAt, universes: universesSorted(), tags: tagsSorted(), stories: [...S.stories.values()] };
+    const texts = Object.fromEntries((await dbAll('texts')).filter(t => S.stories.has(t.id)).map(t => [t.id, t.html]));
+    const body = { library: JSON.stringify(lib), texts: JSON.stringify(texts), base: pref.get('pubBase', ''), message: `Library: ${lib.stories.length} stories` };
+    let r = await managerCall('publish', body, 'publish');
+    if (r.conflict) {
       $('#toast').hidden = true;
       const ok = await ask({
         title: 'Published from somewhere else',
-        text: `The library on the site was published on ${new Date(remote.publishedAt).toLocaleString()}, after this device last loaded it. Publishing now replaces that version with this one.`,
+        text: `The library on the site was published on ${new Date(r.conflict).toLocaleString()}, after this device last loaded it. Publishing now replaces that version with this one.`,
         ok: 'Publish this one', danger: true,
       });
       if (!ok) return;
       toast('Publishing…', null, 0);
+      r = await managerCall('publish', { ...body, force: true }, 'publish');
     }
-    const publishedAt = new Date().toISOString();
-    const lib = { app: 'callisto', v: 1, publishedAt, universes: universesSorted(), tags: tagsSorted(), stories: [...S.stories.values()] };
-    const texts = Object.fromEntries((await dbAll('texts')).filter(t => S.stories.has(t.id)).map(t => [t.id, t.html]));
-    const branch = (await gh('GET', `/repos/${r}`)).default_branch;
-    const ref = await gh('GET', `/repos/${r}/git/ref/heads/${branch}`);
-    const head = await gh('GET', `/repos/${r}/git/commits/${ref.object.sha}`);
-    const blob = async content => (await gh('POST', `/repos/${r}/git/blobs`, { content, encoding: 'utf-8' })).sha;
-    const [a, b] = await Promise.all([blob(JSON.stringify(lib)), blob(JSON.stringify(texts))]);
-    const tree = await gh('POST', `/repos/${r}/git/trees`, {
-      base_tree: head.tree.sha,
-      tree: [
-        { path: DATA + 'library.json', mode: '100644', type: 'blob', sha: a },
-        { path: DATA + 'texts.json', mode: '100644', type: 'blob', sha: b },
-      ],
-    });
-    const commit = await gh('POST', `/repos/${r}/git/commits`, { message: `Library: ${lib.stories.length} stories`, tree: tree.sha, parents: [head.sha] });
-    await gh('PATCH', `/repos/${r}/git/refs/heads/${branch}`, { sha: commit.sha });
     pref.set('pubBase', publishedAt);
     pref.del('dirtyAt');
     toast('Published. Readers see it within a minute or two.', null, 6000);
@@ -303,36 +330,25 @@ async function publish() {
   } finally { publishing = false; }
 }
 
-function publishStrip() {
-  return h('div.pub', h('span', 'Changes not published yet'), h('button.btn.small.primary', { type: 'button', on: { click: publish } }, 'Publish'));
-}
 
-// Turning manager mode on: check the token can write to the repo, then load the published library.
+// Turning manager mode on: sign in with Google; the publishing script checks the account is a manager.
 function managerFlow() {
-  const repoIn = h('input.field', { type: 'text', value: repo(), spellcheck: false, autocomplete: 'off' });
-  const tok = h('input.field', { type: 'password', placeholder: 'github_pat_…', spellcheck: false, autocomplete: 'off', autofocus: true });
   const err = h('p.small', { style: { color: 'var(--danger)' } });
-  const label = t => h('label.small.muted', { style: { display: 'block', margin: '12px 0 6px' } }, t);
   openSheet([
     h('h2', 'Manage the library'),
     h('p.sub', 'For the person who runs this library. Readers never need this.'),
-    h('p.small', 'Make a GitHub token that can change only this site: on github.com go to Settings > Developer settings > Fine-grained tokens > Generate new token. Under Repository access pick "Only select repositories" and choose the repo below. Under Repository permissions set Contents to "Read and write". The token stays on this device.'),
-    label('Repo'), repoIn,
-    label('Token'), tok,
+    h('p.small', 'Sign in with the Google account that manages this library. The same sign-in imports stories from Google Drive.'),
     err,
     h('div.foot',
       h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
-      h('button.btn.primary', { type: 'button', on: { click: e => turnOnManager(e.currentTarget, repoIn.value, tok.value, err) } }, 'Turn on')),
+      h('button.btn.primary', { type: 'button', on: { click: e => turnOnManager(e.currentTarget, err) } }, 'Sign in with Google')),
   ]);
 }
-async function turnOnManager(btn, repoName, token, err) {
-  btn.disabled = true; err.textContent = '';
-  const old = { t: pref.get('ghToken', ''), r: repo() };
-  pref.set('ghToken', token.trim());
-  pref.set('ghRepo', repoName.trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, ''));
+async function turnOnManager(btn, err) {
+  if (btn) btn.disabled = true;
+  if (err) err.textContent = '';
   try {
-    const info = await gh('GET', `/repos/${repo()}`);
-    if (!info.permissions?.push) throw new Error('This token can read the repo but not change it. Set Contents to "Read and write".');
+    const who = await managerCall('check');
     pref.set('admin', true);
     const hasLocal = (await dbAll('stories')).length > 0;
     const keep = hasLocal && await ask({
@@ -342,24 +358,25 @@ async function turnOnManager(btn, repoName, token, err) {
     });
     if (keep) await loadAll();
     else { toast('Loading the published library…', null, 0); await pullPublished(); }
-    toast('Manager mode is on.');
+    toast(`Manager mode is on (${who.email}).`);
     closeSheet();
     go('#/');
     render();
   } catch (x) {
-    pref.set('ghToken', old.t); pref.set('ghRepo', old.r); pref.set('admin', false);
-    err.textContent = x.message; btn.disabled = false;
+    pref.set('admin', false);
+    if (err) { err.textContent = x.message; if (btn) btn.disabled = false; }
+    else toast(x.message, null, 8000);
   }
 }
 async function leaveManager() {
   const dirty = pref.get('dirtyAt', 0);
   const ok = await ask({
     title: 'Leave manager mode?',
-    text: (dirty ? 'There are changes on this device that are not published. They stay on this device, but readers will not see them.\n\n' : '') + 'The GitHub token is removed from this device. This device then shows the library as readers see it.',
+    text: (dirty ? 'There are changes on this device that are not published. They stay on this device, but readers will not see them.\n\n' : '') + 'This device then shows the library as readers see it. Signing in with Google again turns manager mode back on.',
     ok: 'Leave manager mode', danger: !!dirty,
   });
   if (!ok) return;
-  pref.set('admin', false); pref.del('ghToken');
+  pref.set('admin', false);
   await loadPublished();
   go('#/'); render();
 }
@@ -1176,7 +1193,6 @@ $('#sheetBack').addEventListener('click', closeSheet);
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (sheetOpen) { e.preventDefault(); closeSheet(); }
-  else if (!$('#rLookPop').hidden) $('#rLookPop').hidden = true;
   else if (!$('#reader').hidden) closeReader();
 });
 
@@ -1200,8 +1216,10 @@ function ask({ title, text, ok = 'OK', cancel = 'Cancel', input, danger, extra }
 }
 
 /* story details */
-async function openStory(id) {
-  if (!isAdmin()) return openStoryReader(id);
+// Everyone taps a story into the reading sheet; the manager's tools sit behind "Edit details".
+function openStory(id) { return openStoryReader(id); }
+
+async function openStoryManage(id) {
   const s = S.stories.get(id);
   if (!s) return;
   const list = storiesIn(s.universeId);
@@ -1218,7 +1236,7 @@ async function openStory(id) {
     }
     return out;
   })();
-  const refresh = () => openStory(id);
+  const refresh = () => openStoryManage(id);
   const eras = [...new Set(list.map(x => x.era).filter(Boolean))];
   const pg = prog(id);
   const pct = Math.round(pg.readPos * 100);
@@ -1261,14 +1279,14 @@ async function openStory(id) {
     h('div.btn-row',
       h('button.btn.small', { type: 'button', disabled: i <= 0, on: { click: async () => { const ids = list.map(x => x.id); [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↑ Earlier'),
       h('button.btn.small', { type: 'button', disabled: i >= list.length - 1, on: { click: async () => { const ids = list.map(x => x.id); [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↓ Later'),
-      h('button.btn.small', { type: 'button', on: { click: () => pickPlace([id], async (u, at) => { await placeStories([id], u, at); rerenderSoon(); openStory(id); }) } }, 'Move…'),
+      h('button.btn.small', { type: 'button', on: { click: () => pickPlace([id], async (u, at) => { await placeStories([id], u, at); rerenderSoon(); openStoryManage(id); }) } }, 'Move…'),
       h('button.btn.small', {
         type: 'button', on: {
           click: async () => {
             const v = await askEra(eras, s.era);
-            if (v === null) return openStory(id);
+            if (v === null) return openStoryManage(id);
             await saveStories({ ...S.stories.get(id), era: v });
-            rerenderSoon(); openStory(id);
+            rerenderSoon(); openStoryManage(id);
           },
         },
       }, s.era ? 'Change era' : 'Set era'),
@@ -1285,18 +1303,18 @@ async function openStory(id) {
           click: async () => {
             const v = await ask({ title: 'Rename story', input: { value: s.title }, ok: 'Rename' });
             if (v) { await saveStories({ ...S.stories.get(id), title: v }); rerenderSoon(); }
-            openStory(id);
+            openStoryManage(id);
           },
         },
       }, 'Rename'),
-      s.source?.kind === 'gdrive' ? h('button.btn.small', { type: 'button', on: { click: async () => { await refreshFromDrive([id], true); openStory(id); } } }, 'Reload from Google') : null,
+      s.source?.kind === 'gdrive' ? h('button.btn.small', { type: 'button', on: { click: async () => { await refreshFromDrive([id], true); openStoryManage(id); } } }, 'Reload from Google') : null,
       h('button.btn.small.danger', {
         type: 'button', on: {
           click: async () => {
             if (await ask({ title: 'Remove this story?', text: `"${s.title}" leaves Callisto on this device. The original file is not touched.`, ok: 'Remove', danger: true })) {
               await deleteStories([id]); toast('Story removed.');
               if (R.id === id) location.replace('#/'); else render();
-            } else openStory(id);
+            } else openStoryManage(id);
           },
         },
       }, 'Remove')),
@@ -1324,6 +1342,8 @@ function openStoryReader(id) {
     s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null,
     tags.length ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)))] : null,
     s.universeId && (list[i - 1] || list[i + 1]) ? [h('h3', 'In the timeline'), h('div.near', near(list[i - 1], 'Before this'), near(list[i + 1], 'After this'))] : null,
+    isAdmin() ? h('div.manage-link', h('button.btn.small', { type: 'button', on: { click: () => openStoryManage(id) } }, 'Edit details'),
+      !s.summary || s.summaryStale ? h('span.muted.small', s.summary ? 'Summary out of date' : 'No summary yet') : null) : null,
   ]);
 }
 
@@ -1716,11 +1736,14 @@ async function importDrive(st) {
   importOptions(items, errors);
 }
 
-async function refreshFromDrive(ids, force) {
-  if (!G.valid()) { try { await signIn('refresh'); } catch (e) { return toast(e.message); } }
+// quiet: the automatic check. No sign-in, no toasts unless something changed, and when nothing
+// else was waiting to be published it publishes the updated stories itself.
+async function refreshFromDrive(ids, force, quiet) {
+  if (!G.valid()) { if (quiet) return; try { await signIn('refresh'); } catch (e) { return toast(e.message); } }
   const list = ids.map(id => S.stories.get(id)).filter(s => s?.source?.driveId);
-  if (!list.length) return toast('None of these came from Google Drive.');
-  toast(`Checking ${list.length} on Google Drive…`, null, 0);
+  if (!list.length) return quiet ? null : toast('None of these came from Google Drive.');
+  const cleanBefore = !pref.get('dirtyAt', 0);
+  if (!quiet) toast(`Checking ${list.length} on Google Drive…`, null, 0);
   let changed = 0, failed = 0, gone = 0;
   await pool(list, 4, async s => {
     try {
@@ -1739,6 +1762,13 @@ async function refreshFromDrive(ids, force) {
       changed++;
     } catch (e) { if (e.status === 404) gone++; else failed++; }
   });
+  if (quiet) {
+    if (!changed) { if (cleanBefore) pref.del('dirtyAt'); return; }
+    toast(`${changed} stor${changed === 1 ? 'y' : 'ies'} updated from Google Docs.`, null, 5000);
+    rerenderSoon();
+    if (cleanBefore) publish();
+    return;
+  }
   toast(`${changed} updated${gone ? `, ${gone} no longer on Drive` : ''}${failed ? `, ${failed} could not be checked` : ''}.`, null, 6000);
   rerenderSoon();
 }
@@ -1746,23 +1776,12 @@ async function refreshFromDrive(ids, force) {
 /* ───────────── reader ───────────── */
 
 const R = { id: null, saveT: 0, lastY: 0 };
-function applyLook() {
-  const r = $('#reader');
-  r.dataset.theme = pref.get('rTheme', 'sepia');
-  r.dataset.font = pref.get('rFont', 'serif');
-  const size = pref.get('rSize', 18);
-  r.style.setProperty('--r-size', size + 'px');
-  $('#rSize').textContent = size;
-  r.querySelectorAll('[data-theme]').forEach(b => b.classList.toggle('on', b.dataset.theme === r.dataset.theme));
-  r.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('on', b.dataset.font === r.dataset.font));
-}
 async function openReader(id) {
   const s = S.stories.get(id);
   const t = s && await getText(id);
   if (!s || !t) { toast('That story is not on this device.'); location.replace('#/'); return; }
   R.id = id;
   R.openedAt = Date.now();
-  applyLook();
   $('#rTitle').textContent = s.title;
   const page = $('#rPage');
   page.innerHTML = t.html; // our own sanitised output from import
@@ -1777,7 +1796,6 @@ async function openReader(id) {
   const r = $('#reader');
   r.hidden = false;
   r.classList.remove('hide-ui');
-  $('#rLookPop').hidden = true;
   document.title = s.title + ' · Callisto';
   const sc = $('#rScroll');
   sc.scrollTop = 0;
@@ -1812,14 +1830,13 @@ function onReadScroll() {
   $('#rBar').style.width = (p * 100).toFixed(1) + '%';
   $('#rPct').textContent = Math.round(p * 100) + '%';
   const y = sc.scrollTop;
-  if (Math.abs(y - R.lastY) > 24) { $('#reader').classList.toggle('hide-ui', y > R.lastY && y > 80); $('#rLookPop').hidden = true; R.lastY = y; }
+  if (Math.abs(y - R.lastY) > 24) { $('#reader').classList.toggle('hide-ui', y > R.lastY && y > 80); R.lastY = y; }
   clearTimeout(R.saveT);
   R.saveT = setTimeout(saveReadPos, 800);
 }
 $('#rScroll').addEventListener('scroll', onReadScroll, { passive: true });
 $('#rScroll').addEventListener('click', e => {
   if (e.target.closest('a, button')) return;
-  if (!$('#rLookPop').hidden) { $('#rLookPop').hidden = true; return; }
   if (getSelection().toString()) return;
   $('#reader').classList.toggle('hide-ui');
 });
@@ -1827,18 +1844,6 @@ $('#rClose').append(icon('back'));
 $('#rClose').addEventListener('click', closeReader);
 $('#rInfo').append(icon('info'));
 $('#rInfo').addEventListener('click', () => R.id && openStory(R.id));
-$('#rLook').addEventListener('click', e => { e.stopPropagation(); $('#rLookPop').hidden = !$('#rLookPop').hidden; });
-$('#rLookPop').addEventListener('click', e => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  const sc = $('#rScroll');
-  const max = sc.scrollHeight - sc.clientHeight, p = max > 0 ? sc.scrollTop / max : 0;
-  if (b.dataset.theme) pref.set('rTheme', b.dataset.theme);
-  if (b.dataset.font) pref.set('rFont', b.dataset.font);
-  if (b.dataset.size) pref.set('rSize', Math.max(13, Math.min(30, pref.get('rSize', 18) + +b.dataset.size)));
-  applyLook();
-  requestAnimationFrame(() => { sc.scrollTop = p * (sc.scrollHeight - sc.clientHeight); });
-});
 document.addEventListener('visibilitychange', () => { if (document.hidden && !$('#reader').hidden) saveReadPos(); });
 
 /* ───────────── views ───────────── */
@@ -1847,13 +1852,10 @@ function setBar(title, { back = false, actions = [] } = {}) {
   $('#barTitle').textContent = title;
   const bb = $('#backBtn');
   bb.hidden = !back;
-  put($('#barActions'), actions);
+  // Manager: one small Publish button in the bar when there is something to publish.
+  const pub = isAdmin() && pref.get('dirtyAt', 0) ? h('button.pub', { type: 'button', title: 'Changes not published yet', on: { click: publish } }, h('i'), 'Publish') : null;
+  put($('#barActions'), pub, actions);
   document.title = title === 'Callisto' ? 'Callisto' : title + ' · Callisto';
-}
-function fab(label, onclick) {
-  const b = h('button.fab', { type: 'button', on: { click: onclick } }, label);
-  b.insertAdjacentHTML('afterbegin', `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.plus}</svg>`);
-  return b;
 }
 
 function storyRow(s, { num, showU, terms, arranging } = {}) {
@@ -1879,8 +1881,8 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
 }
 
 function viewLibrary(v) {
-  setBar('Callisto');
   const A = isAdmin();
+  setBar('Callisto', { actions: A ? [iconBtn('plus', 'Add stories', () => addFlow())] : [] });
   if (!A && !S.stories.size) {
     v.append(h('div.wrap.empty',
       h('h2', S.loadError ? 'Could not load the library' : 'Nothing to read yet'),
@@ -1918,7 +1920,6 @@ function viewLibrary(v) {
   if (!cards.children.length) cards.append(h('p.muted', 'No universes yet.'));
   w.append(cards);
   v.append(w);
-  if (A) v.append(fab('Add', () => addFlow()));
 }
 
 function viewUniverse(v, id) {
@@ -1960,6 +1961,7 @@ function viewUniverse(v, id) {
   setBar(uName(u), {
     back: true,
     actions: !A ? [] : [
+      arranging ? null : iconBtn('plus', 'Add stories here', () => addFlow({ u })),
       arranging ? h('button.btn.small.primary', { type: 'button', on: { click: () => { S.arranging = false; S.sel.clear(); render(); } } }, 'Done')
         : iconBtn('arrange', 'Arrange the timeline', () => { S.arranging = true; S.sel.clear(); render(); }),
       iconBtn('more', 'More', menu),
@@ -1998,7 +2000,6 @@ function viewUniverse(v, id) {
   w.append(list);
   v.append(w);
   if (arranging) { wireDrag(list, u); drawBulk(); }
-  else if (A) v.append(fab('Add', () => addFlow({ u })));
 }
 
 function colourFlow(uni) {
@@ -2276,8 +2277,7 @@ function viewSettings(v) {
   w.append(h('section.panel',
     h('h2', 'Reading'),
     h('label.check', tapReads, 'Tapping a story opens it to read (details stay under ⓘ in the reader)'),
-    h('label', 'App colours'), theme,
-    h('p', { style: { margin: '12px 0 0' } }, 'Text size, typeface and page colour are under Aa while reading.')));
+    h('label', 'App colours'), theme));
 
   const usage = h('span');
   navigator.storage?.estimate?.().then(e => { usage.textContent = ` Using ${(e.usage / 1048576).toFixed(1)} MB on this device.`; });
@@ -2352,7 +2352,6 @@ function render() {
   else if (r.name === 'tags') viewTags(v);
   else if (r.name === 'tag') viewTag(v, r.id);
   else if (r.name === 'settings') viewSettings(v);
-  if (isAdmin() && pref.get('dirtyAt', 0)) v.prepend(publishStrip());
   const tab = { library: 'library', universe: 'library', search: 'search', tags: 'tags', tag: 'tags', settings: 'settings' }[r.name];
   document.querySelectorAll('.tabs a').forEach(a => { a.classList.toggle('on', a.dataset.tab === tab); a.toggleAttribute('aria-current', a.dataset.tab === tab); });
   v.scrollTop = y;
@@ -2401,7 +2400,10 @@ async function checkUpdate() {
   catch (e) { document.body.replaceChildren(h('p', { style: { padding: '20px' } }, 'Callisto could not open its storage: ' + e.message)); return; }
   navigator.storage?.persist?.();
   route();
+  setTimeout(backgroundChecks, 3000);
   if (after === 'drive') openDrive();
+  else if (after === 'manager') turnOnManager();
+  else if (after === 'publish' && isAdmin()) publish();
   else if (after === 'settings' || after === 'signed-in') toast('Signed in to Google.');
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
