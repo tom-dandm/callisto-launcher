@@ -1231,9 +1231,9 @@ function storyActions(id, after) {
     return b;
   };
   return h('div.actions',
-    h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue · ${pct}%` : pg.status === 'read' ? 'Read again' : 'Read'),
+    h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue · ${pct}%` : pg.status === 'read' && !isAdmin() ? 'Read again' : 'Read'),
     toggle({ fav: !pg.fav }, pg.fav ? 'Remove from favourites' : 'Add to favourites', pg.fav, 'star'),
-    toggle({ status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }, pg.status === 'read' ? 'Mark as unread' : 'Mark as read', pg.status === 'read', 'check'));
+    isAdmin() ? null : toggle({ status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }, pg.status === 'read' ? 'Mark as unread' : 'Mark as read', pg.status === 'read', 'check'));
 }
 
 function askEra(eras, current) {
@@ -1753,7 +1753,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
     arranging ? h('span.handle', { 'aria-label': 'Drag to reorder', title: 'Drag to reorder' }, icon('handle')) : null,
     num != null ? h('span.num', num) : null,
     h('div.body',
-      h('div.t', h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span.fav', { 'aria-label': 'Favourite' }, '★') : null, h('span.leader'), h('span.len', fmtWords(s.words))),
+      h('div.t', isAdmin() ? null : h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span.fav', { 'aria-label': 'Favourite' }, '★') : null, h('span.leader'), h('span.len', fmtWords(s.words))),
       meta || (arranging && s.era) ? h('div.meta', meta, arranging && s.era ? h('span', (meta ? ' · ' : '') + s.era) : null) : null,
       s.summary || s.blurb ? h('p.sum', s.summary || s.blurb) : null,
       tags.length ? h('div.tagline', tags.slice(0, 4).map(t => h('span', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 4 ? h('span.more', `+${tags.length - 4}`) : null) : null),
@@ -1808,7 +1808,7 @@ function viewLibrary(v) {
     const list = storiesIn(u.id);
     const unread = list.filter(s => prog(s.id).status === 'unread').length;
     toc.append(entry('#/u/' + u.id, roman(k + 1), u, u.name, list.length,
-      [unread ? `${unread} unread` : list.length ? 'all read' : '', list.length ? fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''].filter(Boolean).join(' · ')));
+      [A ? '' : unread ? `${unread} unread` : list.length ? 'all read' : '', list.length ? fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''].filter(Boolean).join(' · ')));
   });
   const loose = storiesIn('');
   if (loose.length) toc.append(entry('#/u/_', '·', null, 'Unsorted', loose.length, 'not in a universe yet'));
@@ -1873,7 +1873,7 @@ function viewUniverse(v, id) {
     return;
   }
   const words = all.reduce((n, s) => n + s.words, 0);
-  w.append(h('div.u-head', uIcon(uni, 'u-icon-big'), h('p.muted.small', { style: { margin: 0 } }, `${all.length} stor${all.length === 1 ? 'y' : 'ies'} · ${fmtWords(words)} · ${all.filter(s => prog(s.id).status === 'read').length} read`)));
+  w.append(h('div.u-head', uIcon(uni, 'u-icon-big'), h('p.muted.small', { style: { margin: 0 } }, `${all.length} stor${all.length === 1 ? 'y' : 'ies'} · ${fmtWords(words)}${isAdmin() ? '' : ` · ${all.filter(s => prog(s.id).status === 'read').length} read`}`)));
   let shown = all;
   if (!arranging) {
     const used = new Map();
@@ -1881,7 +1881,7 @@ function viewUniverse(v, id) {
     const tagList = [...used.keys()].map(id => S.tags.get(id)).filter(Boolean).sort((a, b) => used.get(b.id) - used.get(a.id) || collator.compare(a.name, b.name));
     const f = S.filter;
     w.append(h('div.filters',
-      h('button.chip.plain' + (f.unread ? '.on' : ''), { type: 'button', on: { click: () => { f.unread = !f.unread; render(); } } }, 'Unread'),
+      isAdmin() ? null : h('button.chip.plain' + (f.unread ? '.on' : ''), { type: 'button', on: { click: () => { f.unread = !f.unread; render(); } } }, 'Unread'),
       tagList.map(t => h('button.chip' + (f.tags.has(t.id) ? '.on' : ''), { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => { f.tags.has(t.id) ? f.tags.delete(t.id) : f.tags.add(t.id); render(); } } }, t.name))));
     shown = all.filter(s => (!f.unread || prog(s.id).status !== 'read') && [...f.tags].every(t => !S.tags.has(t) || s.tags.includes(t)));
     if (!shown.length) w.append(h('p.muted', 'No stories match these filters.'));
@@ -2023,7 +2023,7 @@ function searchUI(w, home) {
   const input = h('input.field.search', { type: 'search', value: S.searchQ, placeholder: 'Search stories', 'aria-label': 'Search stories', enterkeyhint: 'search' });
   const results = h('div.list');
   const quick = h('div.filters',
-    [['is:unread', 'Unread'], ['is:reading', 'Reading'], ['is:fav', 'Favourites'], ...(isAdmin() ? [['no:summary', 'No summary'], ['no:tags', 'No tags']] : []), ['words:<3000', 'Under 3k words']].map(([q, label]) =>
+    [...(isAdmin() ? [] : [['is:unread', 'Unread'], ['is:reading', 'Reading']]), ['is:fav', 'Favourites'], ...(isAdmin() ? [['no:summary', 'No summary'], ['no:tags', 'No tags']] : []), ['words:<3000', 'Under 3k words']].map(([q, label]) =>
       h('button.chip.plain' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, label)),
     universesSorted().map(u => { const q = `in:"${u.name}"`; return h('button.chip' + (S.searchQ.includes(q) ? '.on' : ''), { type: 'button', 'data-q': q, css: { '--c': u.color }, on: { click: () => { const has = input.value.includes(q); input.value = has ? input.value.replace(q, '').replace(/\s+/g, ' ').trim() : (input.value + ' ' + q).trim(); run(); } } }, u.name); }));
   const hint = h('p.hint', 'Try ', ...['tag:angst', 'in:"Star Wars"', 'character:anna', 'era:"year 2"', '-tag:wip', 'words:1k-5k', '"exact phrase"'].flatMap((x, k) => [k ? ' ' : '', h('code', x)]), '. Typos in titles and tags are forgiven.');
