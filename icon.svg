@@ -1,20 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#f4efe6"/>
-  <!-- a squishy purple blob duck, slightly melting at the base -->
-  <path d="M256 92c-70 0-118 44-122 104-2 30 8 54 22 72-40 22-66 60-66 104 0 30 14 50 40 56 28 6 46-6 70-6s38 12 64 12 40-12 64-12 42 12 70 6c26-6 40-26 40-56 0-44-26-82-66-104 14-18 24-42 22-72-4-60-52-104-138-104z" fill="#b48fe0"/>
-  <!-- soft highlight -->
-  <path d="M190 132c-22 14-34 36-34 58" fill="none" stroke="#d6c0f2" stroke-width="16" stroke-linecap="round"/>
-  <!-- three floppy head feathers -->
-  <path d="M244 96c-6-24 0-44 12-52 0 20 4 34 10 48zM266 96c8-20 24-32 38-32-8 16-12 28-14 42z" fill="#b48fe0"/>
-  <!-- soft rounded beak -->
-  <ellipse cx="256" cy="232" rx="54" ry="26" fill="#f2c98a"/>
-  <path d="M214 236c26 12 58 12 84 0" fill="none" stroke="#d9a65f" stroke-width="6" stroke-linecap="round"/>
-  <!-- dot eyes, a little too far apart -->
-  <circle cx="196" cy="180" r="10" fill="#2a2233"/>
-  <circle cx="316" cy="180" r="10" fill="#2a2233"/>
-  <!-- tiny contented smile under the beak -->
-  <path d="M236 288c12 10 28 10 40 0" fill="none" stroke="#2a2233" stroke-width="7" stroke-linecap="round"/>
-  <!-- little stubby wings -->
-  <path d="M150 340c-20 6-34 22-36 40 22 4 40-6 50-22z" fill="#a37ad4"/>
-  <path d="M362 340c20 6 34 22 36 40-22 4-40-6-50-22z" fill="#a37ad4"/>
+  <defs>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="#f4efe6"/>
+    <!-- a yellow derpy duck's head, close up, running off the bottom of the tile -->
+    <circle cx="256" cy="312" r="226" fill="#ffd23f"/>
+    <!-- soft highlight -->
+    <path d="M118 210c18-46 56-80 104-94" fill="none" stroke="#ffe68a" stroke-width="20" stroke-linecap="round"/>
+    <!-- one cowlick -->
+    <path d="M250 92c-14-30-6-60 22-70-6 22-2 40 10 54 6-18 22-28 40-26-16 12-22 28-22 46z" fill="#ffd23f"/>
+    <!-- googly eyes, mismatched, looking two ways -->
+    <circle cx="174" cy="236" r="58" fill="#fff" stroke="#3a2c14" stroke-width="7"/>
+    <circle cx="150" cy="250" r="22" fill="#2a2233"/>
+    <circle cx="340" cy="222" r="44" fill="#fff" stroke="#3a2c14" stroke-width="7"/>
+    <circle cx="356" cy="208" r="17" fill="#2a2233"/>
+    <!-- cheeks -->
+    <ellipse cx="128" cy="338" rx="30" ry="16" fill="#ffad5c" opacity=".55"/>
+    <ellipse cx="392" cy="330" rx="30" ry="16" fill="#ffad5c" opacity=".55"/>
+    <!-- wide flat bill, hanging a little open -->
+    <path d="M150 330c30-30 182-34 214-4 18 18-10 40-50 44-50 6-110 6-140-6-26-10-36-22-24-34z" fill="#ff9a2e"/>
+    <path d="M184 372c26 40 116 42 140 2-40 10-100 10-140-2z" fill="#e8741a"/>
+    <ellipse cx="254" cy="386" rx="28" ry="12" fill="#f06a6a"/>
+    <!-- nostrils -->
+    <circle cx="230" cy="322" r="5" fill="#c85d10"/>
+    <circle cx="282" cy="320" r="5" fill="#c85d10"/>
+  </g>
 </svg>
