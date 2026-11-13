@@ -1,7 +1,7 @@
 {
   "name": "Callisto",
   "short_name": "Callisto",
-  "description": "A reading app for a collection of stories, arranged by universe and timeline.",
+  "description": "Stories of Frey and Jun.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
