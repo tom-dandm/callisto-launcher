@@ -1,37 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
 <defs>
-<clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
-<radialGradient id="sky" cx=".5" cy=".35" r=".8"><stop offset="0" stop-color="#ece6ff"/><stop offset="1" stop-color="#a99ee6"/></radialGradient>
-<radialGradient id="head" cx=".6" cy=".28" r=".85"><stop offset="0" stop-color="#ffe98a"/><stop offset=".5" stop-color="#ffcf3a"/><stop offset="1" stop-color="#e99a12"/></radialGradient>
-<linearGradient id="bill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffab45"/><stop offset="1" stop-color="#f07a1c"/></linearGradient>
-<linearGradient id="jaw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e5701a"/><stop offset="1" stop-color="#c2550e"/></linearGradient>
+<radialGradient id="sky" cx=".5" cy=".38" r=".78"><stop offset="0" stop-color="#fff0f5"/><stop offset="1" stop-color="#f5bfd2"/></radialGradient>
+<radialGradient id="body" cx=".42" cy=".3" r=".85"><stop offset="0" stop-color="#fff2a8"/><stop offset=".55" stop-color="#ffd84a"/><stop offset="1" stop-color="#f4b31c"/></radialGradient>
+<linearGradient id="bill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb35a"/><stop offset="1" stop-color="#f58a2a"/></linearGradient>
+<radialGradient id="wing" cx=".4" cy=".3" r=".9"><stop offset="0" stop-color="#ffe170"/><stop offset="1" stop-color="#f0aa18"/></radialGradient>
 </defs>
-<g clip-path="url(#tile)">
-<rect width="512" height="512" fill="url(#sky)"/>
-<!-- head and neck, three-quarter view, running off the bottom -->
-<path d="M120 512 C116 448 92 410 92 330 C92 200 176 120 280 120 C376 120 436 192 436 276 C436 352 392 396 360 430 C340 452 336 484 340 512 Z" fill="url(#head)"/>
+<rect width="512" height="512" rx="112" fill="url(#sky)"/>
+<!-- ground shadow -->
+<ellipse cx="256" cy="432" rx="150" ry="18" fill="#e79bb6" opacity=".45"/>
+<!-- feet -->
+<ellipse cx="208" cy="424" rx="32" ry="14" fill="#f58a2a"/>
+<ellipse cx="304" cy="424" rx="32" ry="14" fill="#f58a2a"/>
 <!-- tuft -->
-<path d="M262 124 C246 92 252 62 282 46 C276 70 282 88 296 100 C300 76 318 62 344 62 C326 78 320 100 322 128 Z" fill="#ffd84d"/>
-<!-- soft shade under the jaw -->
-<path d="M150 420 C210 452 300 450 360 420 C344 446 338 478 340 512 L124 512 C122 476 112 446 100 420 Z" fill="#e48f10" opacity=".35"/>
-<!-- lower bill, hanging open -->
-<path d="M262 330 C320 344 410 346 470 330 C470 360 440 392 384 398 C320 404 278 380 262 350 Z" fill="url(#jaw)"/>
-<ellipse cx="370" cy="368" rx="42" ry="14" fill="#ff7f8f"/>
-<!-- upper bill -->
-<path d="M250 300 C270 262 330 254 400 262 C452 268 488 286 486 310 C484 332 450 340 400 338 C330 336 274 336 250 300 Z" fill="url(#bill)"/>
-<path d="M300 280 C340 270 400 272 440 284" stroke="#ffcf8a" stroke-width="8" stroke-linecap="round" fill="none" opacity=".7"/>
-<ellipse cx="420" cy="292" rx="6" ry="4" fill="#b8500c"/>
-<ellipse cx="452" cy="296" rx="5" ry="3.5" fill="#b8500c"/>
-<!-- eyes: near one big, far one small, looking two ways -->
-<circle cx="268" cy="214" r="44" fill="#fff"/>
-<circle cx="252" cy="226" r="24" fill="#1b1a2e"/>
-<circle cx="260" cy="216" r="8" fill="#fff"/>
-<circle cx="384" cy="196" r="30" fill="#fff"/>
-<circle cx="396" cy="184" r="16" fill="#1b1a2e"/>
-<circle cx="401" cy="178" r="5.5" fill="#fff"/>
-<!-- cheek -->
-<ellipse cx="196" cy="296" rx="30" ry="17" fill="#ff8fab" opacity=".55"/>
+<path d="M248 112 C238 86 250 64 274 60 C266 76 268 92 280 104 C282 88 294 80 308 82 C298 92 294 104 296 118 Z" fill="#ffd84a"/>
+<!-- one round body, head and all -->
+<path d="M256 104 C352 104 410 170 414 252 C418 300 436 330 436 360 C436 410 360 428 256 428 C152 428 76 410 76 360 C76 330 94 300 98 252 C102 170 160 104 256 104 Z" fill="url(#body)"/>
+<!-- little wings -->
+<path d="M96 310 C70 318 60 344 70 364 C92 366 112 350 118 326 Z" fill="url(#wing)"/>
+<path d="M416 310 C442 318 452 344 442 364 C420 366 400 350 394 326 Z" fill="url(#wing)"/>
 <!-- highlight -->
-<path d="M150 214 C164 176 196 148 236 136" stroke="#fff6c8" stroke-width="14" stroke-linecap="round" fill="none" opacity=".75"/>
-</g>
+<path d="M150 186 C164 156 190 136 222 128" stroke="#fffbe0" stroke-width="16" stroke-linecap="round" fill="none" opacity=".8"/>
+<!-- dot eyes -->
+<circle cx="196" cy="246" r="16" fill="#2b2233"/>
+<circle cx="316" cy="246" r="16" fill="#2b2233"/>
+<circle cx="201" cy="241" r="5" fill="#fff"/>
+<circle cx="321" cy="241" r="5" fill="#fff"/>
+<!-- cheeks -->
+<ellipse cx="160" cy="292" rx="28" ry="15" fill="#ff8fab" opacity=".6"/>
+<ellipse cx="352" cy="292" rx="28" ry="15" fill="#ff8fab" opacity=".6"/>
+<!-- small round bill -->
+<path d="M218 278 C218 262 236 256 256 256 C276 256 294 262 294 278 C294 296 276 304 256 304 C236 304 218 296 218 278 Z" fill="url(#bill)"/>
+<path d="M222 282 C244 292 268 292 290 282" stroke="#d96d16" stroke-width="5" stroke-linecap="round" fill="none"/>
+<ellipse cx="246" cy="266" rx="12" ry="5" fill="#ffd29a" opacity=".8"/>
 </svg>
