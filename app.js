@@ -1739,25 +1739,25 @@ function setBar(title, { back = false, actions = [] } = {}) {
   // Manager: one small Publish button in the bar when there is something to publish.
   const pub = isAdmin() && pref.get('dirtyAt', 0) ? h('button.pub', { type: 'button', title: 'Changes not published yet', on: { click: publish } }, h('i'), 'Publish') : null;
   put($('#barActions'), pub, actions);
-  document.title = title === 'Callisto' ? 'Callisto' : title + ' · Callisto';
+  document.title = !title || title === 'Callisto' ? 'Callisto' : title + ' · Callisto';
 }
 
 function storyRow(s, { num, showU, terms, arranging } = {}) {
   const tags = s.tags.map(id => S.tags.get(id)).filter(Boolean);
   const pg = prog(s.id);
   const pct = Math.round(pg.readPos * 100);
-  const meta = [showU ? uName(s.universeId) + (s.era ? ' · ' + s.era : '') : null, fmtWords(s.words), pg.status === 'reading' && pct ? pct + '% read' : null, s.author ? 'by ' + s.author : null].filter(Boolean).join(' · ');
+  const meta = [showU ? uName(s.universeId) + (s.era ? ' · ' + s.era : '') : null, pg.status === 'reading' && pct ? pct + '% read' : null, s.author ? 'by ' + s.author : null].filter(Boolean).join(' · ');
   const row = h('div.row' + (S.sel.has(s.id) ? '.sel' : ''), { 'data-id': s.id, role: arranging ? null : 'button', tabindex: arranging ? null : '0' },
     arranging ? h('span.handle', { 'aria-label': 'Drag to reorder', title: 'Drag to reorder' }, icon('handle')) : null,
     num != null ? h('span.num', num) : null,
     h('div.body',
-      h('div.t', h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span', { style: { color: 'var(--accent)' }, 'aria-label': 'Favourite' }, '★') : null),
-      h('div.meta', meta, arranging && s.era ? h('span', ' · ' + s.era) : null),
+      h('div.t', h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span.fav', { 'aria-label': 'Favourite' }, '★') : null, h('span.leader'), h('span.len', fmtWords(s.words))),
+      meta || (arranging && s.era) ? h('div.meta', meta, arranging && s.era ? h('span', (meta ? ' · ' : '') + s.era) : null) : null,
       s.summary || s.blurb ? h('p.sum', s.summary || s.blurb) : null,
       tags.length ? h('div.tagline', tags.slice(0, 4).map(t => h('span', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 4 ? h('span.more', `+${tags.length - 4}`) : null) : null),
     arranging ? h('label.pick', h('input', { type: 'checkbox', checked: S.sel.has(s.id), 'aria-label': 'Select ' + s.title, on: { change: e => { e.target.checked ? S.sel.add(s.id) : S.sel.delete(s.id); row.classList.toggle('sel', e.target.checked); drawBulk(); } } })) : null);
   if (!arranging) {
-    const open = () => pref.get('tapReads', false) ? go('#/read/' + s.id) : openStory(s.id);
+    const open = () => openStory(s.id);
     row.addEventListener('click', open);
     row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
   }
@@ -1766,7 +1766,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
 
 function viewLibrary(v) {
   const A = isAdmin();
-  setBar('Callisto', { actions: [A ? iconBtn('plus', 'Add stories', () => addFlow()) : null, iconBtn('gear', 'Settings', () => go('#/settings'))] });
+  setBar('', { actions: [A ? iconBtn('plus', 'Add stories', () => addFlow()) : null, iconBtn('gear', 'Settings', () => go('#/settings'))] });
   if (!A && !S.stories.size) {
     v.append(h('div.wrap.empty',
       h('h2', S.loadError ? 'Could not load the library' : 'Nothing to read yet'),
@@ -1785,35 +1785,38 @@ function viewLibrary(v) {
   }
   const w = h('div.wrap');
   const home = h('div.home');
+  w.prepend(h('header.title-page', h('h1', 'Callisto'), h('p', 'A library of stories'), h('span.orn', { 'aria-hidden': 'true' }, '❦')));
   searchUI(w, home);
   w.append(home);
-  const recent = [...S.stories.values()].filter(s => prog(s.id).status === 'reading').sort((a, b) => prog(b.id).lastRead - prog(a.id).lastRead).slice(0, 10);
+  const count = n => `${n} stor${n === 1 ? 'y' : 'ies'}`;
+  const recent = [...S.stories.values()].filter(s => prog(s.id).status === 'reading').sort((a, b) => prog(b.id).lastRead - prog(a.id).lastRead).slice(0, 5);
   if (recent.length) {
-    home.append(h('div.section-h', h('h2', 'Continue reading')),
-      h('div.recent', recent.map(s => h('a.card.cont', { href: '#/read/' + s.id },
-        h('div.cont-top', uTile(S.universes.get(s.universeId) || { name: '·', color: 'var(--ink-2)' }, 'u-icon-sm'),
-          h('div', h('h3', s.title), h('p', uName(s.universeId) + (s.era ? ' · ' + s.era : '')))),
-        h('div.bar-mini', h('i', { style: { width: Math.round(prog(s.id).readPos * 100) + '%' } }))))));
+    home.append(h('div.section-h', h('h2', 'Bookmarks')),
+      h('div.bookmarks', recent.map(s => h('a.bookmark', { href: '#/read/' + s.id },
+        h('span.bm-t', s.title), h('span.leader'), h('span.bm-p', Math.round(prog(s.id).readPos * 100) + '%'),
+        h('span.bm-u', uName(s.universeId) + (s.era ? ' · ' + s.era : ''))))));
   }
-  home.append(h('div.section-h', h('h2', 'Universes'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
-  const cards = h('div.cards');
-  for (const u of universesSorted()) {
+  // The universes as a table of contents.
+  home.append(h('div.section-h', h('h2', 'Contents'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
+  const toc = h('ol.toc');
+  const entry = (href, num, u, name, n, sub) => h('li', h('a.toc-row', { href },
+    h('span.toc-n', num), uIcon(u, 'u-icon-sm'), h('span.toc-t', name), h('span.leader'), h('span.toc-p', count(n)),
+    sub ? h('span.toc-sub', sub) : null));
+  universesSorted().forEach((u, k) => {
     const list = storiesIn(u.id);
     const unread = list.filter(s => prog(s.id).status === 'unread').length;
-    cards.append(h('a.card.has-icon', { href: '#/u/' + u.id }, uTile(u),
-      h('div', h('h3', u.name),
-        h('p', `${list.length} stor${list.length === 1 ? 'y' : 'ies'}${unread ? ` · ${unread} unread` : ''}${list.length ? ' · ' + fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''}`))));
-  }
+    toc.append(entry('#/u/' + u.id, roman(k + 1), u, u.name, list.length,
+      [unread ? `${unread} unread` : list.length ? 'all read' : '', list.length ? fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''].filter(Boolean).join(' · ')));
+  });
   const loose = storiesIn('');
-  if (loose.length) cards.append(h('a.card.has-icon', { href: '#/u/_' }, uTile({ name: '·', color: 'var(--ink-2)' }), h('div', h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`))));
-  if (!cards.children.length) cards.append(h('p.muted', 'No universes yet.'));
-  home.append(cards);
-  // Tags, most used first: tap one for its stories. The full list (and managing tags) is "All tags".
+  if (loose.length) toc.append(entry('#/u/_', '·', null, 'Unsorted', loose.length, 'not in a universe yet'));
+  home.append(toc.children.length ? toc : h('p.muted', 'No universes yet.'));
+  // Tags as the index at the back: most used first; "All tags" for the full list and new tags.
   const used = tagsSorted().map(t => [t, tagUse(t.id)]).filter(([t, n]) => n || A).sort((a, b) => b[1] - a[1]);
-  if (used.length) {
-    home.append(h('div.section-h', h('h2', 'Tags'), h('a.small', { href: '#/tags' }, A ? 'All tags and new tags' : 'All tags')),
-      h('div.chips', used.slice(0, 18).map(([t]) => h('a.chip', { href: '#/tag/' + t.id, css: { '--c': tagColor(t) } }, t.name))));
-  } else if (A) home.append(h('div.section-h', h('h2', 'Tags'), h('a.small', { href: '#/tags' }, 'New tag')));
+  if (used.length || A) {
+    home.append(h('div.section-h', h('h2', 'Index'), h('a.small', { href: '#/tags' }, A ? 'All tags and new tags' : 'All tags')),
+      h('p.index', used.slice(0, 24).flatMap(([t], k) => [k ? h('span.sep', ' · ') : null, h('a', { href: '#/tag/' + t.id }, t.name)])));
+  }
   v.append(w);
 }
 
@@ -1916,6 +1919,7 @@ async function setIcon(id, file) {
   if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/jpeg', .85);
   await saveUniverse({ ...S.universes.get(id), icon: url });
 }
+const roman = n => [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']].reduce((out, [v, r]) => { while (n >= v) { out += r; n -= v; } return out; }, '');
 const uIcon = (u, cls = 'u-icon') => u?.icon ? h('img.' + cls, { src: u.icon, alt: '' }) : null;
 // The square tile beside a universe: its icon, or its first letter on its colour.
 const uTile = (u, cls = 'u-icon') => uIcon(u, cls) || h('span.' + cls + '.mono', { css: { '--c': u?.color || 'var(--ink-2)' }, 'aria-hidden': 'true' }, (u?.name || '?').trim().charAt(0).toUpperCase());
@@ -2166,10 +2170,6 @@ function viewSettings(v) {
       [...S.stories.values()].some(s => s.source?.driveId) ? h('button.btn.small', { type: 'button', on: { click: () => refreshFromDrive([...S.stories.values()].map(s => s.id)) } }, 'Check all for changes') : null,
       signed ? h('button.btn.small', { type: 'button', on: { click: () => { signOut(); render(); } } }, 'Sign out') : null)));
 
-  const tapReads = h('input', { type: 'checkbox', checked: pref.get('tapReads', false), on: { change: e => pref.set('tapReads', e.target.checked) } });
-  w.append(h('section.panel',
-    h('h2', 'Reading'),
-    h('label.check', tapReads, 'Tapping a story opens it to read (details stay under ⓘ in the reader)')));
 
   const ver = h('span', '…');
   navigator.serviceWorker?.controller?.postMessage('version');

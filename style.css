@@ -377,3 +377,61 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
 .home > .section-h:first-child { margin-top: 18px; }
 .section-h a.small { color: var(--accent); text-decoration: none; font-weight: 600; }
 .home .chips a.chip { text-decoration: none; background: var(--surface); border-color: var(--line); }
+
+/* ── like a book (13 Nov 2026) ── */
+:root { --book: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Noto Serif", serif; }
+.bar h1, .sheet h2, .section-h h2, .empty h2, .panel h2 { font-family: var(--book); }
+.bar h1 { font-weight: 600; letter-spacing: .01em; }
+.title-page { text-align: center; padding: 18px 0 22px; }
+.title-page h1 { margin: 0; font: 600 40px/1.1 var(--book); letter-spacing: .02em; }
+.title-page p { margin: 8px 0 0; font: italic 16px var(--book); color: var(--ink-2); }
+.title-page .orn { display: block; margin-top: 12px; color: var(--ink-2); font-size: 18px; }
+.section-h { border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-top: 30px; }
+.section-h h2 { font-size: 13px; font-variant: small-caps; text-transform: lowercase; letter-spacing: .14em; font-weight: 600; color: var(--ink-2); }
+.leader { flex: 1; min-width: 12px; align-self: flex-end; margin: 0 6px 5px; border-bottom: 2px dotted color-mix(in srgb, var(--ink-2) 45%, transparent); }
+
+/* contents */
+.toc { list-style: none; margin: 0; padding: 0; }
+.toc-row { display: flex; flex-wrap: wrap; align-items: baseline; padding: 12px 2px; color: var(--ink); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.toc-row:hover .toc-t { color: var(--accent); }
+.toc-n { width: 34px; flex: none; font: 600 14px var(--book); color: var(--ink-2); }
+.toc-row .u-icon-sm { width: 26px; height: 26px; border-radius: 7px; margin-right: 10px; align-self: center; }
+.toc-t { font: 600 19px/1.3 var(--book); }
+.toc-p { font: 15px var(--book); color: var(--ink-2); white-space: nowrap; }
+.toc-sub { flex-basis: 100%; padding-left: 34px; margin-top: 2px; font-size: var(--small); color: var(--ink-2); }
+.toc-row:has(.u-icon-sm) .toc-sub { padding-left: 70px; }
+
+/* bookmarks */
+.bookmarks { display: flex; flex-direction: column; }
+.bookmark { display: flex; flex-wrap: wrap; align-items: baseline; padding: 10px 2px; color: var(--ink); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.bookmark:hover .bm-t { color: var(--accent); }
+.bm-t { font: italic 17px var(--book); }
+.bm-p { font: 14px var(--book); color: var(--accent); }
+.bm-u { flex-basis: 100%; font-size: var(--small); color: var(--ink-2); margin-top: 2px; }
+
+/* index */
+.index { margin: 10px 0 0; font: 16px/1.9 var(--book); }
+.index a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
+.index a:hover { color: var(--accent); border-color: var(--accent); }
+.index .sep { color: var(--ink-2); }
+
+/* story rows as contents lines */
+.list { gap: 0; }
+.row { background: none; border: 0; border-radius: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); padding: 14px 2px; }
+.row:hover { background: none; border-color: color-mix(in srgb, var(--line) 60%, transparent); }
+.row:hover .t > span:nth-child(2) { color: var(--accent); }
+.row .t { align-items: baseline; gap: 8px; }
+.row .t > span:nth-child(2) { font: 600 18px/1.3 var(--book); white-space: normal; }
+.row .t .leader { margin-bottom: 6px; }
+.row .t .len { font: 14px var(--book); color: var(--ink-2); white-space: nowrap; }
+.row .t .fav { color: var(--accent); font-size: 14px; }
+.row .num { font: 600 14px var(--book); width: 26px; padding-top: 4px; }
+.row .dot { align-self: center; }
+.row .sum { font: italic 15px/1.5 var(--book); color: var(--ink-2); margin-top: 4px; }
+.row.sel { background: var(--accent-soft); }
+.era { justify-content: center; margin: 26px 0 4px; font: 600 13px var(--book); font-variant: small-caps; text-transform: lowercase; letter-spacing: .14em; }
+.era::before { content: ""; flex: 1; height: 1px; background: var(--line); }
+.arranging .row { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 6px; }
+.u-head { justify-content: center; text-align: center; flex-direction: column; margin-bottom: 10px; }
+.sheet h2 { font-size: 24px; }
+.sheet .summary { font-style: italic; }
