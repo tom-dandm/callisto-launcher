@@ -1,4 +1,4 @@
-const CACHE = 'callisto-shell-13';
+const CACHE = 'callisto-shell-14';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
