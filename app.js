@@ -247,6 +247,13 @@ function backgroundChecks() {
     if (Date.now() - pref.get('checkedAt', 0) > 5 * 60000) refreshPublished();
     return;
   }
+  if (Date.now() - pref.get('summaryCheckedAt', 0) > 5 * 60000) {
+    pref.set('summaryCheckedAt', Date.now());
+    fetch('data/library.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
+      .then(lib => lib && lib.publishedAt !== pref.get('pubBase', '') ? keepSiteSummaries(lib, true) : 0)
+      .then(n => { if (n) { render(); toast(`${n} new summar${n === 1 ? 'y' : 'ies'} from the site.`, null, 5000); } })
+      .catch(() => {});
+  }
   if (G.valid() && Date.now() - pref.get('driveCheckedAt', 0) > 30 * 60000 && [...S.stories.values()].some(s => s.source?.driveId)) {
     pref.set('driveCheckedAt', Date.now());
     refreshFromDrive([...S.stories.keys()], false, true);
@@ -293,6 +300,21 @@ async function pullPublished() {
   return lib;
 }
 
+// Copies newer summaries from the published library into this device's copy. Returns how many.
+// Claude Code writes summaries straight to the site, so the manager's copy would otherwise lack them.
+async function keepSiteSummaries(lib, quiet) {
+  if (lib === undefined) { const r = await managerCall('pull'); lib = r.library ? JSON.parse(r.library) : null; }
+  const put = [];
+  for (const s of lib?.stories || []) {
+    const mine = S.stories.get(s.id);
+    if (!mine || !(s.summary || '').trim() || s.summary === mine.summary) continue;
+    if ((mine.summary || '').trim() && (s.summaryAt || 0) <= (mine.summaryAt || 0)) continue;
+    put.push({ ...mine, summary: s.summary, summaryAt: s.summaryAt, summaryBy: s.summaryBy, summaryStale: !!s.summaryStale });
+  }
+  if (put.length) { S.quiet = !!quiet; try { await saveStories(put); } finally { S.quiet = false; } }
+  return put.length;
+}
+
 let publishing = false;
 async function publish() {
   if (publishing) return;
@@ -305,6 +327,8 @@ async function publish() {
     const body = { library: JSON.stringify(lib), texts: JSON.stringify(texts), base: pref.get('pubBase', ''), message: `Library: ${lib.stories.length} stories` };
     let r = await managerCall('publish', body, 'publish');
     if (r.conflict) {
+      // Summaries written by Claude Code go straight to the site: carry them into this copy first.
+      if (await keepSiteSummaries()) { publishing = false; return await publish(); }
       $('#toast').hidden = true;
       const ok = await ask({
         title: 'Published from somewhere else',
