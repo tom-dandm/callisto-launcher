@@ -1268,10 +1268,7 @@ async function openStoryManage(id) {
     h('h2', s.title),
     h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
     universeField(s, refresh),
-    h('div.btn-row',
-      h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue (${pct}%)` : pg.status === 'read' ? 'Read again' : 'Read'),
-      h('button.btn', { type: 'button', 'aria-pressed': String(pg.fav), on: { click: () => { setProg(id, { fav: !pg.fav }); refresh(); rerenderSoon(); } } }, pg.fav ? '★ Favourite' : '☆ Favourite'),
-      h('button.btn', { type: 'button', on: { click: () => { setProg(id, { status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }); refresh(); rerenderSoon(); } } }, pg.status === 'read' ? 'Mark unread' : 'Mark read')),
+    storyActions(id, () => { refresh(); rerenderSoon(); }),
     h('h3', 'Summary'), summaryBox,
     h('div.btn-row', { style: { marginTop: '10px' } }, sumBtn),
     h('h3', 'Tags'),
@@ -1344,10 +1341,7 @@ function openStoryReader(id) {
   openSheet([
     h('h2', s.title),
     h('p.sub', [uName(s.universeId), s.universeId ? ` · #${i + 1} of ${list.length}` : '', s.era ? ` · ${s.era}` : '', ` · ${fmtWords(s.words)}`, s.author ? ` · by ${s.author}` : ''].join('')),
-    h('div.btn-row',
-      h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue (${pct}%)` : pg.status === 'read' ? 'Read again' : 'Read'),
-      h('button.btn', { type: 'button', 'aria-pressed': String(pg.fav), on: { click: () => { setProg(id, { fav: !pg.fav }); openStory(id); rerenderSoon(); } } }, pg.fav ? '★ Favourite' : '☆ Favourite'),
-      h('button.btn', { type: 'button', on: { click: () => { setProg(id, { status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }); openStory(id); rerenderSoon(); } } }, pg.status === 'read' ? 'Mark unread' : 'Mark read')),
+    storyActions(id, () => { openStory(id); rerenderSoon(); }),
     s.summary ? [h('h3', 'Summary'), h('p.summary', s.summary)] : null,
     s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null,
     tags.length ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)))] : null,
@@ -1374,6 +1368,21 @@ function universeField(s, after) {
     rerenderSoon(); after();
   });
   return h('label.field-row', h('span', 'Universe'), sel);
+}
+
+// Read, plus favourite and read/unread as two round icon buttons: one line on a phone.
+function storyActions(id, after) {
+  const pg = prog(id), pct = Math.round(pg.readPos * 100);
+  const toggle = (patch, label, on, ic) => {
+    const b = iconBtn(ic, label, () => { setProg(id, patch); after(); }, { 'aria-pressed': String(on) });
+    b.classList.add('round');
+    if (on) b.classList.add('on');
+    return b;
+  };
+  return h('div.actions',
+    h('button.btn.primary', { type: 'button', on: { click: () => go('#/read/' + id) } }, pg.status === 'reading' && pct > 0 ? `Continue · ${pct}%` : pg.status === 'read' ? 'Read again' : 'Read'),
+    toggle({ fav: !pg.fav }, pg.fav ? 'Remove from favourites' : 'Add to favourites', pg.fav, 'star'),
+    toggle({ status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }, pg.status === 'read' ? 'Mark as unread' : 'Mark as read', pg.status === 'read', 'check'));
 }
 
 function askEra(eras, current) {
@@ -1899,7 +1908,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
       h('div.t', h('span.dot' + (pg.status === 'read' ? '.read' : pg.status === 'reading' ? '.reading' : ''), { title: pg.status }), h('span', terms?.length ? markTerms(s.title, terms) : s.title), pg.fav ? h('span', { style: { color: 'var(--accent)' }, 'aria-label': 'Favourite' }, '★') : null),
       h('div.meta', meta, arranging && s.era ? h('span', ' · ' + s.era) : null),
       s.summary || s.blurb ? h('p.sum', s.summary || s.blurb) : null,
-      tags.length ? h('div.chips', tags.slice(0, 5).map(t => h('span.chip', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 5 ? h('span.chip.plain', `+${tags.length - 5}`) : null) : null),
+      tags.length ? h('div.tagline', tags.slice(0, 4).map(t => h('span', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 4 ? h('span.more', `+${tags.length - 4}`) : null) : null),
     arranging ? h('label.pick', h('input', { type: 'checkbox', checked: S.sel.has(s.id), 'aria-label': 'Select ' + s.title, on: { change: e => { e.target.checked ? S.sel.add(s.id) : S.sel.delete(s.id); row.classList.toggle('sel', e.target.checked); drawBulk(); } } })) : null);
   if (!arranging) {
     const open = () => pref.get('tapReads', false) ? go('#/read/' + s.id) : openStory(s.id);
@@ -1932,8 +1941,9 @@ function viewLibrary(v) {
   const recent = [...S.stories.values()].filter(s => prog(s.id).status === 'reading').sort((a, b) => prog(b.id).lastRead - prog(a.id).lastRead).slice(0, 10);
   if (recent.length) {
     w.append(h('div.section-h', h('h2', 'Continue reading')),
-      h('div.recent', recent.map(s => h('a.card', { href: '#/read/' + s.id, css: { '--c': uColor(s.universeId) } },
-        h('h3', s.title), h('p', uName(s.universeId) + (s.era ? ' · ' + s.era : '')),
+      h('div.recent', recent.map(s => h('a.card.cont', { href: '#/read/' + s.id },
+        h('div.cont-top', uTile(S.universes.get(s.universeId) || { name: '·', color: 'var(--ink-2)' }, 'u-icon-sm'),
+          h('div', h('h3', s.title), h('p', uName(s.universeId) + (s.era ? ' · ' + s.era : '')))),
         h('div.bar-mini', h('i', { style: { width: Math.round(prog(s.id).readPos * 100) + '%' } }))))));
   }
   w.append(h('div.section-h', h('h2', 'Universes'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
@@ -1941,12 +1951,12 @@ function viewLibrary(v) {
   for (const u of universesSorted()) {
     const list = storiesIn(u.id);
     const unread = list.filter(s => prog(s.id).status === 'unread').length;
-    cards.append(h('a.card' + (u.icon ? '.has-icon' : ''), { href: '#/u/' + u.id, css: { '--c': u.color } }, uIcon(u),
+    cards.append(h('a.card.has-icon', { href: '#/u/' + u.id }, uTile(u),
       h('div', h('h3', u.name),
         h('p', `${list.length} stor${list.length === 1 ? 'y' : 'ies'}${unread ? ` · ${unread} unread` : ''}${list.length ? ' · ' + fmtWords(list.reduce((n, s) => n + s.words, 0)) : ''}`))));
   }
   const loose = storiesIn('');
-  if (loose.length) cards.append(h('a.card', { href: '#/u/_', css: { '--c': 'var(--ink-2)' } }, h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`)));
+  if (loose.length) cards.append(h('a.card.has-icon', { href: '#/u/_' }, uTile({ name: '·', color: 'var(--ink-2)' }), h('div', h('h3', 'Unsorted'), h('p', `${loose.length} stor${loose.length === 1 ? 'y' : 'ies'} not in a universe yet`))));
   if (!cards.children.length) cards.append(h('p.muted', 'No universes yet.'));
   w.append(cards);
   v.append(w);
@@ -1961,7 +1971,8 @@ function viewUniverse(v, id) {
   const menu = () => openSheet([
     h('h2', uName(u)),
     h('div.menu-list',
-      h('button', { type: 'button', on: { click: () => addFlow({ u, at: null }) } }, 'Add stories here'),
+      all.length > 1 ? h('button', { type: 'button', 'aria-label': 'Arrange the timeline', on: { click: () => { closeSheet(); S.arranging = true; S.sel.clear(); render(); } } }, icon('arrange'), 'Arrange the timeline') : null,
+      h('button', { type: 'button', on: { click: () => addFlow({ u, at: null }) } }, icon('plus'), 'Add stories here'),
       h('button', { type: 'button', on: { click: () => { closeSheet(); summariseMany(all.filter(s => !s.summary || s.summaryStale).map(s => s.id)); } } }, `Summarise the ${all.filter(s => !s.summary || s.summaryStale).length} without a summary`),
       all.some(s => s.source?.driveId) ? h('button', { type: 'button', on: { click: () => { closeSheet(); refreshFromDrive(all.map(s => s.id)); } } }, 'Check Google Drive for changes') : null,
       uni ? h('button', { type: 'button', on: { click: async () => { const n = await ask({ title: 'Rename universe', input: { value: uni.name }, ok: 'Rename' }); if (n) { await saveUniverse({ ...uni, name: n }); render(); } } } }, 'Rename') : null,
@@ -1992,12 +2003,9 @@ function viewUniverse(v, id) {
   const A = isAdmin();
   setBar(uName(u), {
     back: true,
-    actions: !A ? [] : [
-      arranging ? null : iconBtn('plus', 'Add stories here', () => addFlow({ u })),
-      arranging ? h('button.btn.small.primary', { type: 'button', on: { click: () => { S.arranging = false; S.sel.clear(); render(); } } }, 'Done')
-        : iconBtn('arrange', 'Arrange the timeline', () => { S.arranging = true; S.sel.clear(); render(); }),
-      iconBtn('more', 'More', menu),
-    ],
+    actions: !A ? [] : arranging
+      ? [h('button.btn.small.primary', { type: 'button', on: { click: () => { S.arranging = false; S.sel.clear(); render(); } } }, 'Done')]
+      : [iconBtn('plus', 'Add stories here', () => addFlow({ u })), iconBtn('more', 'More', menu)],
   });
   const w = h('div.wrap');
   if (!all.length) {
@@ -2055,6 +2063,8 @@ async function setIcon(id, file) {
   await saveUniverse({ ...S.universes.get(id), icon: url });
 }
 const uIcon = (u, cls = 'u-icon') => u?.icon ? h('img.' + cls, { src: u.icon, alt: '' }) : null;
+// The square tile beside a universe: its icon, or its first letter on its colour.
+const uTile = (u, cls = 'u-icon') => uIcon(u, cls) || h('span.' + cls + '.mono', { css: { '--c': u?.color || 'var(--ink-2)' }, 'aria-hidden': 'true' }, (u?.name || '?').trim().charAt(0).toUpperCase());
 
 function colourFlow(uni) {
   openSheet([
@@ -2174,7 +2184,7 @@ function viewSearch(v) {
       ...r.slice(0, 200).map(({ s, terms }) => {
         const row = storyRow(s, { showU: true, terms });
         const sn = terms.length ? snippet(s, terms) : null;
-        if (sn) row.querySelector('.body').append(h('p.snip', sn));
+        if (sn) { row.querySelector('.sum')?.remove(); row.querySelector('.tagline')?.remove(); row.querySelector('.body').append(h('p.snip', sn)); }
         return row;
       }));
   };
