@@ -64,6 +64,8 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   arrange: '<path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3"/>',
   handle: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="3"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
@@ -1768,7 +1770,31 @@ function setBar(title, { back = false, actions = [], home = false } = {}) {
   document.title = !title || title === 'Callisto' ? 'Callisto' : title + ' · Callisto';
 }
 
-function storyRow(s, { num, showU, terms, arranging } = {}) {
+// The manager's up and down arrows on a timeline row: a slim column at the row's right edge.
+function moveArrows(s, u, k, n) {
+  const b = (dir, label, off) => {
+    const x = iconBtn(dir, label, e => { e.stopPropagation(); moveBy(s.id, u, off, dir); });
+    x.disabled = off < 0 ? k === 0 : k === n - 1;
+    return x;
+  };
+  return h('div.mv', b('up', 'Move earlier', -1), b('down', 'Move later', 1));
+}
+async function moveBy(id, u, off, dir) {
+  const ids = storiesIn(u).map(s => s.id), k = ids.indexOf(id), to = k + off;
+  if (k < 0 || to < 0 || to >= ids.length) return;
+  [ids[k], ids[to]] = [ids[to], ids[k]];
+  await setOrder(u, ids);
+  render();
+  const row = $('#view').querySelector(`.row[data-id="${id}"]`);
+  if (!row) return;
+  row.classList.add('moved');
+  setTimeout(() => row.classList.remove('moved'), 600);
+  const r = row.getBoundingClientRect(), b = $('#view').getBoundingClientRect();
+  if (r.top < b.top || r.bottom > b.bottom) row.scrollIntoView({ block: 'nearest' });
+  row.querySelector(`.mv button[aria-label="${dir === 'up' ? 'Move earlier' : 'Move later'}"]:not(:disabled)`)?.focus({ preventScroll: true });
+}
+
+function storyRow(s, { num, showU, terms, arranging, mv } = {}) {
   const tags = s.tags.map(id => S.tags.get(id)).filter(Boolean);
   const pg = prog(s.id);
   const pct = Math.round(pg.readPos * 100);
@@ -1781,6 +1807,7 @@ function storyRow(s, { num, showU, terms, arranging } = {}) {
       meta || (arranging && s.era) ? h('div.meta', meta, arranging && s.era ? h('span', (meta ? ' · ' : '') + s.era) : null) : null,
       s.summary || s.blurb ? h('p.sum', s.summary || s.blurb) : null,
       tags.length ? h('div.tagline', tags.slice(0, 4).map(t => h('span', { css: { '--c': tagColor(t) } }, t.name)), tags.length > 4 ? h('span.more', `+${tags.length - 4}`) : null) : null),
+    mv || null,
     arranging ? h('label.pick', h('input', { type: 'checkbox', checked: S.sel.has(s.id), 'aria-label': 'Select ' + s.title, on: { change: e => { e.target.checked ? S.sel.add(s.id) : S.sel.delete(s.id); row.classList.toggle('sel', e.target.checked); drawBulk(); } } })) : null);
   if (!arranging) {
     const open = () => openStory(s.id);
@@ -1910,19 +1937,22 @@ function viewUniverse(v, id) {
     shown = all.filter(s => (!f.unread || prog(s.id).status !== 'read') && [...f.tags].every(t => !S.tags.has(t) || s.tags.includes(t)));
     if (!shown.length) w.append(h('p.muted', 'No stories match these filters.'));
   } else {
-    w.append(h('p.hint', { style: { margin: '0 0 12px' } }, 'Drag ', h('b', '⠿'), ' to reorder. Tick stories to move, tag or set the era of several at once.'));
+    w.append(h('p.hint', { style: { margin: '0 0 12px' } }, 'Drag ', h('b', '⠿'), ' or use the arrows to reorder. Tick stories to move, tag or set the era of several at once.'));
   }
-  const list = h('div.list' + (arranging ? '.arranging' : ''));
+  // The manager reorders in place: arrows on each row, or hold a story and drag it. Not while a filter hides some.
+  const reorder = A && all.length > 1 && shown.length === all.length;
+  const list = h('div.list' + (arranging ? '.arranging' : '') + (reorder ? '.reorder' : ''));
   let lastEra = null;
   for (const s of shown) {
     const n = all.indexOf(s) + 1;
     if (!arranging && u && (s.era || '') !== (lastEra ?? '') && s.era) list.append(h('div.era', s.era));
     lastEra = s.era || '';
-    list.append(storyRow(s, { num: u ? n : null, arranging }));
+    list.append(storyRow(s, { num: u ? n : null, arranging, mv: reorder ? moveArrows(s, u, n - 1, all.length) : null }));
   }
   w.append(list);
   v.append(w);
   if (arranging) { wireDrag(list, u); drawBulk(); }
+  else if (reorder) wireDrag(list, u, true);
 }
 
 // A universe's icon: an image from the device, cropped square and kept small (published with the library).
@@ -1991,10 +2021,11 @@ function drawBulk() {
   document.body.append(bar);
 }
 
-// Drag to reorder: pointer events on the handle, live reordering, auto-scroll near the edges.
-function wireDrag(list, u) {
+// Drag to reorder: pointer events on the handle (or, with `hold`, holding a row still for a moment),
+// live reordering, auto-scroll near the edges.
+function wireDrag(list, u, hold = false) {
   const view = $('#view');
-  let drag = null;
+  let drag = null, wait = null, justDragged = false;
   const place = () => {
     if (!drag) return;
     const { row, y } = drag;
@@ -2016,24 +2047,53 @@ function wireDrag(list, u) {
     if (dy) { view.scrollTop += dy; place(); }
     drag.raf = requestAnimationFrame(tick);
   };
-  list.addEventListener('pointerdown', e => {
-    const handle = e.target.closest('.handle');
-    if (!handle || e.button > 0) return;
-    e.preventDefault();
-    const row = handle.closest('.row');
+  const start = (row, el, e, y) => {
     const r = row.getBoundingClientRect();
-    drag = { row, grab: e.clientY - r.top, y: e.clientY, id: e.pointerId };
-    handle.setPointerCapture(e.pointerId);
+    drag = { row, grab: y - r.top, y, id: e.pointerId };
+    try { el.setPointerCapture(e.pointerId); } catch {}
     row.classList.add('dragging');
+    list.classList.add('dragging-on');
     drag.raf = requestAnimationFrame(tick);
+  };
+  list.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    const handle = e.target.closest('.handle');
+    if (handle) { e.preventDefault(); start(handle.closest('.row'), handle, e, e.clientY); return; }
+    if (!hold) return;
+    const row = e.target.closest('.row');
+    if (!row || e.target.closest('button, input, label, a')) return;
+    clearTimeout(wait?.t);
+    wait = { id: e.pointerId, x: e.clientX, y: e.clientY, row };
+    wait.t = setTimeout(() => {
+      const w = wait; wait = null;
+      navigator.vibrate?.(15);
+      start(w.row, w.row, e, w.y);
+    }, 450);
   });
-  list.addEventListener('pointermove', e => { if (!drag || e.pointerId !== drag.id) return; drag.y = e.clientY; place(); });
+  list.addEventListener('pointermove', e => {
+    if (wait && e.pointerId === wait.id) {
+      if (Math.hypot(e.clientX - wait.x, e.clientY - wait.y) > 8) { clearTimeout(wait.t); wait = null; }
+      else wait.y = e.clientY;
+      return;
+    }
+    if (!drag || e.pointerId !== drag.id) return; drag.y = e.clientY; place();
+  });
+  // While dragging on a touch screen, the finger moves the story, not the page.
+  list.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });
+  if (hold) {
+    list.addEventListener('contextmenu', e => { if (e.target.closest('.row')) e.preventDefault(); });
+    list.addEventListener('click', e => { if (justDragged) { e.stopPropagation(); e.preventDefault(); justDragged = false; } }, true);
+  }
   const end = async e => {
+    if (wait && e.pointerId === wait.id) { clearTimeout(wait.t); wait = null; }
     if (!drag || e.pointerId !== drag.id) return;
     cancelAnimationFrame(drag.raf);
     drag.row.classList.remove('dragging');
+    list.classList.remove('dragging-on');
     drag.row.style.transform = '';
     drag = null;
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 400);
     const ids = [...list.querySelectorAll('.row')].map(r => r.dataset.id);
     const before = storiesIn(u).map(s => s.id);
     if (ids.join() !== before.join()) { await setOrder(u, ids); render(); }
