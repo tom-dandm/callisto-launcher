@@ -1,35 +1,107 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
 <defs>
-<radialGradient id="sky" cx=".5" cy=".38" r=".78"><stop offset="0" stop-color="#fff0f5"/><stop offset="1" stop-color="#f5bfd2"/></radialGradient>
-<radialGradient id="body" cx=".42" cy=".3" r=".85"><stop offset="0" stop-color="#fff2a8"/><stop offset=".55" stop-color="#ffd84a"/><stop offset="1" stop-color="#f4b31c"/></radialGradient>
-<linearGradient id="bill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb35a"/><stop offset="1" stop-color="#f58a2a"/></linearGradient>
-<radialGradient id="wing" cx=".4" cy=".3" r=".9"><stop offset="0" stop-color="#ffe170"/><stop offset="1" stop-color="#f0aa18"/></radialGradient>
+<radialGradient id="bg" cx=".5" cy=".46" r=".72"><stop offset="0" stop-color="#2d2146"/><stop offset=".6" stop-color="#171026"/><stop offset="1" stop-color="#0b0814"/></radialGradient>
+<radialGradient id="halo" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ff2a48" stop-opacity=".6"/><stop offset=".45" stop-color="#b3123a" stop-opacity=".22"/><stop offset="1" stop-color="#b3123a" stop-opacity="0"/></radialGradient>
+<linearGradient id="leather" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b2452"/><stop offset=".55" stop-color="#24163a"/><stop offset="1" stop-color="#140c22"/></linearGradient>
+<radialGradient id="sheen" cx=".32" cy=".22" r=".7"><stop offset="0" stop-color="#ffffff" stop-opacity=".1"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+<radialGradient id="redcast" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ff2a48" stop-opacity=".7"/><stop offset=".55" stop-color="#d0103a" stop-opacity=".2"/><stop offset="1" stop-color="#d0103a" stop-opacity="0"/></radialGradient>
+<linearGradient id="pages" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#cdb98f"/><stop offset="1" stop-color="#a8946b"/></linearGradient>
+<linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6dc9a"/><stop offset=".45" stop-color="#c9973f"/><stop offset="1" stop-color="#7d5419"/></linearGradient>
+<linearGradient id="goldEdge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8c77a"/><stop offset="1" stop-color="#9c6d24"/></linearGradient>
+<radialGradient id="ruby" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#ff8a98"/><stop offset=".35" stop-color="#e3173d"/><stop offset=".8" stop-color="#8e0722"/><stop offset="1" stop-color="#4f0213"/></radialGradient>
 </defs>
-<rect width="512" height="512" rx="112" fill="url(#sky)"/>
-<!-- ground shadow -->
-<ellipse cx="256" cy="432" rx="150" ry="18" fill="#e79bb6" opacity=".45"/>
-<!-- feet -->
-<ellipse cx="208" cy="424" rx="32" ry="14" fill="#f58a2a"/>
-<ellipse cx="304" cy="424" rx="32" ry="14" fill="#f58a2a"/>
-<!-- tuft -->
-<path d="M248 112 C238 86 250 64 274 60 C266 76 268 92 280 104 C282 88 294 80 308 82 C298 92 294 104 296 118 Z" fill="#ffd84a"/>
-<!-- one round body, head and all -->
-<path d="M256 104 C352 104 410 170 414 252 C418 300 436 330 436 360 C436 410 360 428 256 428 C152 428 76 410 76 360 C76 330 94 300 98 252 C102 170 160 104 256 104 Z" fill="url(#body)"/>
-<!-- little wings -->
-<path d="M96 310 C70 318 60 344 70 364 C92 366 112 350 118 326 Z" fill="url(#wing)"/>
-<path d="M416 310 C442 318 452 344 442 364 C420 366 400 350 394 326 Z" fill="url(#wing)"/>
-<!-- highlight -->
-<path d="M150 186 C164 156 190 136 222 128" stroke="#fffbe0" stroke-width="16" stroke-linecap="round" fill="none" opacity=".8"/>
-<!-- dot eyes -->
-<circle cx="196" cy="246" r="16" fill="#2b2233"/>
-<circle cx="316" cy="246" r="16" fill="#2b2233"/>
-<circle cx="201" cy="241" r="5" fill="#fff"/>
-<circle cx="321" cy="241" r="5" fill="#fff"/>
-<!-- cheeks -->
-<ellipse cx="160" cy="292" rx="28" ry="15" fill="#ff8fab" opacity=".6"/>
-<ellipse cx="352" cy="292" rx="28" ry="15" fill="#ff8fab" opacity=".6"/>
-<!-- small round bill -->
-<path d="M218 278 C218 262 236 256 256 256 C276 256 294 262 294 278 C294 296 276 304 256 304 C236 304 218 296 218 278 Z" fill="url(#bill)"/>
-<path d="M222 282 C244 292 268 292 290 282" stroke="#d96d16" stroke-width="5" stroke-linecap="round" fill="none"/>
-<ellipse cx="246" cy="266" rx="12" ry="5" fill="#ffd29a" opacity=".8"/>
+<rect width="512" height="512" rx="112" fill="url(#bg)"/>
+<circle cx="256" cy="250" r="230" fill="url(#halo)"/>
+
+<g transform="translate(262 254) scale(1.1) translate(-262 -254)">
+<!-- page block, seen past the right and bottom edges of the cover -->
+<path d="M148 104 L404 104 Q414 104 414 114 L414 418 Q414 428 404 428 L148 428 Z" fill="#0f0919"/>
+<path d="M150 98 L396 98 Q404 98 404 106 L404 412 Q404 420 396 420 L150 420 Z" fill="url(#pages)"/>
+<g stroke="#8a7650" stroke-width="1.5" opacity=".55">
+<path d="M394 112 V406"/><path d="M398 116 V402"/><path d="M168 412 H392"/><path d="M168 416 H388"/>
+</g>
+
+<!-- front cover -->
+<rect x="104" y="80" width="284" height="330" rx="16" fill="url(#leather)"/>
+<rect x="104" y="80" width="284" height="330" rx="16" fill="url(#sheen)"/>
+<!-- spine hinge -->
+<path d="M140 80 V410" stroke="#0e0818" stroke-width="5" opacity=".7"/>
+<path d="M145 80 V410" stroke="#4d3368" stroke-width="2" opacity=".6"/>
+<path d="M104 96 Q104 80 120 80 L136 80 L136 410 L120 410 Q104 410 104 394 Z" fill="#1a1029" opacity=".55"/>
+<g fill="#7d5419" opacity=".85">
+<rect x="106" y="128" width="30" height="5" rx="2"/><rect x="106" y="190" width="30" height="5" rx="2"/>
+<rect x="106" y="296" width="30" height="5" rx="2"/><rect x="106" y="358" width="30" height="5" rx="2"/>
+</g>
+
+<!-- red light from the jewel falling on the leather -->
+<circle cx="266" cy="246" r="128" fill="url(#redcast)"/>
+
+<!-- tooled gold border -->
+<rect x="160" y="100" width="210" height="290" rx="8" fill="none" stroke="url(#gold)" stroke-width="3"/>
+<rect x="168" y="108" width="194" height="274" rx="5" fill="none" stroke="#c9973f" stroke-width="1.2" opacity=".55"/>
+
+<!-- metal corners -->
+<path d="M388 80 L388 128 Q362 108 340 80 Z" fill="url(#gold)"/>
+<path d="M388 410 L388 362 Q362 382 340 410 Z" fill="url(#gold)"/>
+<path d="M136 80 L184 80 Q162 104 136 122 Z" fill="url(#gold)"/>
+<path d="M136 410 L184 410 Q162 386 136 368 Z" fill="url(#gold)"/>
+<g fill="#5a3a10"><circle cx="376" cy="94" r="3"/><circle cx="376" cy="396" r="3"/><circle cx="148" cy="94" r="3"/><circle cx="148" cy="396" r="3"/></g>
+
+<!-- arcane ring round the jewel -->
+<g transform="translate(266 246)">
+<circle r="92" fill="none" stroke="url(#gold)" stroke-width="2.5"/>
+<circle r="78" fill="none" stroke="#c9973f" stroke-width="1.2" opacity=".6"/>
+<g stroke="#e8c77a" stroke-width="2.2" stroke-linecap="round" fill="none" opacity=".9">
+<path d="M0 -86 v-5 M-3 -84 l3 -3 l3 3" transform="rotate(0)"/>
+<path d="M-3 -88 h6 M0 -82 v-8" transform="rotate(30)"/>
+<path d="M-3 -82 l6 -8 M3 -82 l-6 -8" transform="rotate(60)"/>
+<path d="M0 -82 v-8 M0 -86 h4" transform="rotate(90)"/>
+<path d="M-3 -82 l3 -8 l3 8" transform="rotate(120)"/>
+<path d="M-3 -88 h6 M-3 -84 h6" transform="rotate(150)"/>
+<path d="M0 -86 v-5 M-3 -84 l3 -3 l3 3" transform="rotate(180)"/>
+<path d="M-3 -88 h6 M0 -82 v-8" transform="rotate(210)"/>
+<path d="M-3 -82 l6 -8 M3 -82 l-6 -8" transform="rotate(240)"/>
+<path d="M0 -82 v-8 M0 -86 h4" transform="rotate(270)"/>
+<path d="M-3 -82 l3 -8 l3 8" transform="rotate(300)"/>
+<path d="M-3 -88 h6 M-3 -84 h6" transform="rotate(330)"/>
+</g>
+<!-- four points of the setting reaching to the ring -->
+<g fill="url(#gold)">
+<path d="M0 -76 L7 -54 L-7 -54 Z"/><path d="M0 76 L7 54 L-7 54 Z"/>
+<path d="M-76 0 L-54 -7 L-54 7 Z"/><path d="M76 0 L54 -7 L54 7 Z"/>
+</g>
+<!-- bezel -->
+<circle r="56" fill="url(#gold)"/>
+<circle r="50" fill="#2a0610"/>
+<!-- faceted ruby -->
+<circle r="47" fill="url(#ruby)"/>
+<g opacity=".9">
+<path d="M0 -47 L17 -17 L-17 -17 Z" fill="#ff5c72" opacity=".55"/>
+<path d="M47 0 L17 -17 L17 17 Z" fill="#7a0620" opacity=".55"/>
+<path d="M0 47 L17 17 L-17 17 Z" fill="#5c0418" opacity=".6"/>
+<path d="M-47 0 L-17 -17 L-17 17 Z" fill="#ff4762" opacity=".4"/>
+<path d="M-33 -33 L0 -47 L-17 -17 Z" fill="#ff9aa8" opacity=".45"/>
+<path d="M33 -33 L0 -47 L17 -17 Z" fill="#c4102f" opacity=".5"/>
+<path d="M33 33 L47 0 L17 17 Z" fill="#4f0213" opacity=".5"/>
+<path d="M-33 33 L-47 0 L-17 17 Z" fill="#a50c2b" opacity=".5"/>
+<path d="M-17 -17 L17 -17 L17 17 L-17 17 Z" fill="#e8213f"/>
+<path d="M-17 -17 L17 -17 L6 -6 L-6 -6 Z" fill="#ff7a8c" opacity=".7"/>
+</g>
+<path d="M-30 -22 Q-22 -36 -6 -40" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none" opacity=".75"/>
+<circle cx="-12" cy="-10" r="4" fill="#fff" opacity=".85"/>
+</g>
+
+<!-- clasp over the page edge -->
+<path d="M372 226 H414 Q420 226 420 232 V262 Q420 268 414 268 H372 Z" fill="#1d1230"/>
+<rect x="364" y="232" width="34" height="30" rx="6" fill="url(#gold)"/>
+<rect x="372" y="240" width="18" height="14" rx="3" fill="#5a3a10"/>
+<circle cx="381" cy="247" r="3" fill="#e8c77a"/>
+
+</g>
+<!-- a few faint sparks -->
+<g fill="#ffb3bf">
+<circle cx="78" cy="138" r="2.5" opacity=".7"/><circle cx="440" cy="166" r="2" opacity=".6"/>
+<circle cx="448" cy="346" r="2.5" opacity=".5"/><circle cx="70" cy="330" r="2" opacity=".5"/>
+</g>
+<path d="M430 98 L433 108 L443 111 L433 114 L430 124 L427 114 L417 111 L427 108 Z" fill="#f6dc9a" opacity=".85"/>
 </svg>

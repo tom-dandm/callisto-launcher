@@ -226,6 +226,13 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
 }
 .menu-list button:hover { color: var(--accent); }
 .menu-list button.danger { color: var(--danger); }
+/* era picker: the chosen era is ticked */
+.menu-list.pick button.on { color: var(--accent); font-weight: 600; }
+.menu-list.pick button.on::after { content: '✓'; margin-left: auto; }
+/* "+ New tag" / "+ New era": the field only appears after the button is tapped */
+.new-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.new-row .field { flex: 1 1 160px; min-width: 0; width: auto; }
+.new-row select.field { flex: 0 1 150px; }
 .pick-list { display: flex; flex-direction: column; gap: 6px; }
 .pick-list .slot { min-height: 30px; border-style: dashed; }
 .pick-list .item { padding: 8px 12px; border-radius: var(--radius-s); background: var(--surface-2); font-size: 14px; }

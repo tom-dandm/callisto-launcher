@@ -299,6 +299,7 @@ async function pullPublished() {
   await loadAll();
   pref.set('pubBase', lib?.publishedAt || '');
   pref.del('dirtyAt');
+  if (isAdmin()) await fixEraBlocks();
   return lib;
 }
 
@@ -415,9 +416,54 @@ async function findOrMakeTag(name, group = 'Other') {
   return t;
 }
 
-// Writes the order of one universe: ids in reading order.
+// One block per era in a timeline (Tom, 17 Nov 2026: two "Autumn" blocks must not happen).
+// Stories keep their order; a story whose era already has a block joins the end of that block.
+// The key ignores case and spaces; stories with no era stay where they are.
+const eraKey = e => lc((e || '').replace(/\s+/g, ' ').trim());
+function groupByEra(ids) {
+  const blocks = new Map(), out = [];
+  for (const id of ids) {
+    const k = eraKey(S.stories.get(id)?.era);
+    if (!k) { out.push([id]); continue; }
+    if (!blocks.has(k)) { blocks.set(k, []); out.push(blocks.get(k)); }
+    blocks.get(k).push(id);
+  }
+  return out.flat();
+}
+// The one spelling of an era: a season or an era already in use wins over a new spelling of it.
+function canonEra(v) {
+  const k = eraKey(v);
+  return k ? eraChoices().find(e => eraKey(e) === k) || v.replace(/\s+/g, ' ').trim() : '';
+}
+async function setEra(ids, v) {
+  const era = canonEra(v);
+  await saveStories(ids.map(id => ({ ...S.stories.get(id), era })));
+  // A story given an era that already has a block goes to the end of that block.
+  const moving = new Set(ids);
+  for (const u of new Set(ids.map(id => S.stories.get(id).universeId || ''))) {
+    const all = storiesIn(u).map(x => x.id);
+    const rest = all.filter(id => !moving.has(id));
+    for (const id of all.filter(id => moving.has(id))) {
+      const k = eraKey(era);
+      const last = k ? rest.map(x => eraKey(S.stories.get(x).era)).lastIndexOf(k) : -1;
+      rest.splice(last >= 0 ? last + 1 : Math.min(all.indexOf(id), rest.length), 0, id);
+    }
+    await setOrder(u, rest);
+  }
+}
+// Joins any era split into two blocks (run once the manager's copy is loaded).
+async function fixEraBlocks() {
+  for (const u of new Set([...S.stories.values()].map(x => x.universeId || ''))) {
+    const ids = storiesIn(u).map(x => x.id), grouped = groupByEra(ids);
+    const spelled = ids.filter(id => { const e = S.stories.get(id).era; return e && canonEra(e) !== e; });
+    if (spelled.length) await saveStories(spelled.map(id => ({ ...S.stories.get(id), era: canonEra(S.stories.get(id).era) })));
+    if (spelled.length || grouped.some((id, i) => id !== ids[i])) await setOrder(u, grouped);
+  }
+}
+
+// Writes the order of one universe: ids in reading order, each era kept in one block.
 async function setOrder(u, ids) {
-  const list = ids.map((id, i) => ({ ...S.stories.get(id), universeId: u || '', pos: i }));
+  const list = groupByEra(ids).map((id, i) => ({ ...S.stories.get(id), universeId: u || '', pos: i }));
   await saveStories(list);
 }
 // Moves stories into universe u at index (in the list without them).
@@ -834,7 +880,8 @@ function gotToken(token, expiresIn) {
   pref.set('signedIn', true);
   gfetch(`${DRIVE}/about?fields=user(emailAddress)`).then(a => { pref.set('googleEmail', a.user.emailAddress); if (S.route.name === 'settings') render(); }, () => {});
 }
-const pageSignIn = () => matchMedia('(pointer: coarse)').matches;
+const coarse = () => matchMedia('(pointer: coarse)').matches;
+const pageSignIn = coarse;
 
 function loadGis() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -1077,7 +1124,8 @@ function openSheet(content, onClose) {
     if (!backPending) history.pushState({ sheet: true }, '');
   }
   sh.scrollTop = 0;
-  setTimeout(() => sh.querySelector('[autofocus]')?.focus(), 30);
+  // On a phone a focused field pops the keyboard up, so nothing is focused until it is tapped.
+  if (!coarse()) setTimeout(() => sh.querySelector('[autofocus]')?.focus(), 30);
 }
 function hideSheet() {
   if (!sheetOpen) return;
@@ -1170,7 +1218,7 @@ async function openStoryManage(id) {
           click: async () => {
             const v = await askEra(eras, s.era);
             if (v === null) return openStoryManage(id);
-            await saveStories({ ...S.stories.get(id), era: v });
+            await setEra([id], v);
             rerenderSoon(); openStoryManage(id);
           },
         },
@@ -1262,33 +1310,48 @@ function storyActions(id, after) {
     isAdmin() ? null : toggle({ status: pg.status === 'read' ? 'unread' : 'read', readPos: 0 }, pg.status === 'read' ? 'Mark as unread' : 'Mark as read', pg.status === 'read', 'check'));
 }
 
-function askEra(eras, current) {
-  const listId = 'eraList';
-  const dl = h('datalist#' + listId, eras.map(e => h('option', { value: e })));
-  return ask({
-    title: 'Era', text: 'A label for this point in the timeline, such as "Year 2" or "Before the war". Stories next to each other with the same era are grouped under it. Leave it empty for none.',
-    input: { value: current || '', placeholder: 'Era', list: listId }, ok: 'Save', extra: dl,
+// The four seasons are the eras; any other era already on a story is offered too.
+const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+function eraChoices() {
+  const used = [...new Set([...S.stories.values()].map(s => s.era).filter(Boolean))];
+  return [...SEASONS, ...used.filter(e => !SEASONS.some(x => lc(x) === lc(e))).sort()];
+}
+// A tap on an era chooses it. Typing only starts after + New era. Gives the era, '' for none, null on Cancel.
+function askEra(_eras, current) {
+  return new Promise(res => {
+    let done = false;
+    const finish = v => { if (done) return; done = true; res(v); closeSheet(); };
+    const cur = lc(current || '');
+    const opt = (v, label) => h('button' + (lc(v) === cur ? '.on' : ''), { type: 'button', 'aria-pressed': String(lc(v) === cur), on: { click: () => finish(v) } }, label || v);
+    const field = h('input.field', { type: 'text', placeholder: 'Name of the new era', enterkeyhint: 'done' });
+    const use = () => { const v = field.value.trim(); if (v) finish(v); };
+    field.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); use(); } });
+    const newRow = h('div', { hidden: true }, h('div.new-row', field, h('button.btn.primary', { type: 'button', on: { click: use } }, 'Use')));
+    const newBtn = h('button.chip.add', { type: 'button', on: { click: () => { newBtn.hidden = true; newRow.hidden = false; field.focus(); } } }, '+ New era');
+    openSheet([
+      h('h2', 'Era'),
+      h('p.sub', 'Stories next to each other with the same era are grouped under it.'),
+      h('div.menu-list.pick', eraChoices().map(e => opt(e)), opt('', 'No era')),
+      h('div', { style: { marginTop: '12px' } }, newBtn, newRow),
+      h('div.foot', h('button.btn', { type: 'button', on: { click: () => finish(null) } }, 'Cancel')),
+    ], () => { if (!done) { done = true; res(null); } });
   });
 }
 
-/* tag picker: works for one story or many (tri-state) */
-function pickTags(ids, after) {
+/* tag picker: works for one story or many (tri-state), or on a set of tag ids (opts.set, for an import) */
+function pickTags(ids, after, opts = {}) {
   const chosen = new Map();
   for (const t of S.tags.values()) {
+    if (opts.set) { chosen.set(t.id, opts.set.has(t.id) ? 'all' : 'none'); continue; }
     const n = ids.filter(id => S.stories.get(id)?.tags.includes(t.id)).length;
     chosen.set(t.id, n === 0 ? 'none' : n === ids.length ? 'all' : 'some');
   }
   const start = new Map(chosen);
-  const q = h('input.field', { type: 'search', placeholder: 'Find or create a tag', autofocus: true });
-  const groupSel = h('select.field', { style: { maxWidth: '180px' } }, groups().map(g => h('option', { value: g }, g)));
-  groupSel.value = 'Other';
   const box = h('div');
-  const create = h('div.btn-row', { style: { marginTop: '10px' } });
   const draw = () => {
-    const f = lc(q.value.trim());
     box.replaceChildren();
     for (const g of groups()) {
-      const ts = tagsSorted().filter(t => (t.group || 'Other') === g && (!f || lc(t.name).includes(f)));
+      const ts = tagsSorted().filter(t => (t.group || 'Other') === g);
       if (!ts.length) continue;
       box.append(h('h3', g), h('div.chips', ts.map(t => {
         const st = chosen.get(t.id);
@@ -1299,27 +1362,39 @@ function pickTags(ids, after) {
         }, st === 'all' ? '✓ ' : '', t.name);
       })));
     }
-    if (!box.children.length) box.append(h('p.muted.small', S.tags.size ? 'No tags match.' : 'No tags yet. Type a name above to make one.'));
-    const exact = [...S.tags.values()].some(t => lc(t.name) === f);
-    create.replaceChildren();
-    if (f && !exact) create.append(groupSel, h('button.btn.small', {
-      type: 'button', on: {
-        click: async () => { const t = await findOrMakeTag(q.value.trim(), groupSel.value); chosen.set(t.id, 'all'); start.set(t.id, 'none'); q.value = ''; draw(); },
-      },
-    }, `Create "${q.value.trim()}"`));
+    if (!box.children.length) box.append(h('p.muted.small', 'No tags yet. Tap + New tag to make one.'));
   };
-  q.addEventListener('input', draw);
-  q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); create.querySelector('button')?.click(); } });
+  // Typing only starts after + New tag is tapped.
+  const name = h('input.field', { type: 'text', placeholder: 'Tag name, e.g. Rhea or Slow burn', enterkeyhint: 'done' });
+  const groupSel = h('select.field', { 'aria-label': 'Group' }, groups().map(g => h('option', { value: g }, g)));
+  groupSel.value = 'Other';
+  const newRow = h('div', { hidden: true }, h('div.new-row', name, groupSel));
+  const create = async () => {
+    const v = name.value.trim();
+    if (!v) return;
+    const t = await findOrMakeTag(v, groupSel.value);
+    if (!start.has(t.id)) start.set(t.id, 'none');
+    chosen.set(t.id, 'all'); name.value = ''; draw();
+    newRow.hidden = true; newBtn.hidden = false;
+  };
+  newRow.firstChild.append(h('button.btn.primary', { type: 'button', on: { click: create } }, 'Add'));
+  name.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); create(); } });
+  const newBtn = h('button.chip.add', { type: 'button', on: { click: () => { newBtn.hidden = true; newRow.hidden = false; name.focus(); } } }, '+ New tag');
   draw();
   openSheet([
-    h('h2', ids.length > 1 ? `Tags for ${ids.length} stories` : 'Tags'),
+    h('h2', opts.title || (ids.length > 1 ? `Tags for ${ids.length} stories` : 'Tags')),
     ids.length > 1 ? h('p.sub', 'Dashed tags are on some of them. Tap to put a tag on all, tap again to take it off all.') : null,
-    q, create, box,
+    box,
+    h('div', { style: { marginTop: '14px' } }, newBtn, newRow),
     h('div.foot',
       h('button.btn', { type: 'button', on: { click: () => { closeSheet(); after && setTimeout(after, 60); } } }, 'Cancel'),
       h('button.btn.primary', {
         type: 'button', on: {
           click: async () => {
+            if (opts.set) {
+              for (const [tid, st] of chosen) { if (st === 'all') opts.set.add(tid); else opts.set.delete(tid); }
+              closeSheet(); after && setTimeout(after, 60); return;
+            }
             const upd = ids.map(id => {
               const s = S.stories.get(id);
               const set = new Set(s.tags);
@@ -1432,15 +1507,20 @@ function importOptions(items, errors = [], ctx = {}) {
   const perFolder = h('input', { type: 'checkbox', checked: folders.length > 1 });
   const ao3 = h('input', { type: 'checkbox', checked: pref.get('ao3Tags', false) });
   const dupSel = h('select.field', h('option', { value: 'update' }, 'Update their text, keep their place and tags'), h('option', { value: 'skip' }, 'Skip them'), h('option', { value: 'copy' }, 'Add them again as copies'));
-  const era = h('input.field', { type: 'text', placeholder: 'Era for all of these (optional)' });
+  const eraSel = h('select.field', { 'aria-label': 'Era' }, h('option', { value: '' }, 'No era'), eraChoices().map(e => h('option', { value: e }, e)), h('option', { value: '__new' }, '+ New era…'));
+  const eraOwn = h('input.field', { type: 'text', placeholder: 'Name of the new era', hidden: true, style: { marginTop: '10px' } });
+  eraSel.addEventListener('change', () => { eraOwn.hidden = eraSel.value !== '__new'; if (!eraOwn.hidden) eraOwn.focus(); });
+  const era = {
+    get value() { return eraSel.value === '__new' ? eraOwn.value : eraSel.value; },
+    set value(v) { v = v || ''; if (!v || eraChoices().includes(v)) eraSel.value = v; else { eraSel.value = '__new'; eraOwn.value = v; eraOwn.hidden = false; } },
+  };
   const tagBox = h('div.chips');
   const drawTags = () => tagBox.replaceChildren(
     ...[...tagIds].map(id => S.tags.get(id)).filter(Boolean).map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => { tagIds.delete(t.id); drawTags(); } } }, t.name, h('span.x', '×'))),
     h('button.chip.add', { type: 'button', on: { click: () => chooseTags() } }, '+ Tag all of them'));
-  const chooseTags = async () => {
-    const name = await ask({ title: 'Tag all of them', input: { placeholder: 'Tag name', list: 'allTags' }, ok: 'Add', extra: h('datalist#allTags', tagsSorted().map(t => h('option', { value: t.name }))) });
-    if (name) { const t = await findOrMakeTag(name); tagIds.add(t.id); }
-    importOptions(items, errors, { ...ctx, restore: { u, at, tagIds, era: era.value } });
+  const chooseTags = () => {
+    const keep = { u, at, tagIds, era: era.value };
+    pickTags([], () => importOptions(items, errors, { ...ctx, restore: keep }), { set: tagIds, title: 'Tag all of them' });
   };
   if (ctx.restore) { u = ctx.restore.u; at = ctx.restore.at; ctx.restore.tagIds.forEach(t => tagIds.add(t)); era.value = ctx.restore.era; uSel.value = u; }
   drawTags();
@@ -1481,7 +1561,7 @@ function importOptions(items, errors = [], ctx = {}) {
     folders.length ? h('label.check', perFolder, `One universe per Drive folder (${folders.length} folders: ${folders.slice(0, 4).join(', ')}${folders.length > 4 ? '…' : ''})`) : null,
     uHead, uSel,
     posWrap,
-    h('h3', 'Era and tags'), era, h('div', { style: { marginTop: '10px' } }, tagBox),
+    h('h3', 'Era and tags'), eraSel, eraOwn, h('div', { style: { marginTop: '10px' } }, tagBox),
     hasAo3 ? h('h3', 'Options') : null,
     hasAo3 ? h('label.check', ao3, 'Use the AO3 tags in these files (fandom, relationships, characters, additional tags)') : null,
     dups ? [h('h3', `${dups} already in your library`), dupSel] : null,
@@ -1538,7 +1618,7 @@ async function commitImport(items, o) {
       }
     }
     const s = {
-      id: uid(), title: it.title, universeId: u, pos: 1e9, era: o.era || '', tags: [...tags],
+      id: uid(), title: it.title, universeId: u, pos: 1e9, era: canonEra(o.era || ''), tags: [...tags],
       words: it.words, blurb: it.blurb || '', author: it.meta?.author || '', summary: '',
       addedAt: now + res.added, source: it.source,
     };
@@ -1945,8 +2025,8 @@ function viewUniverse(v, id) {
   let lastEra = null;
   for (const s of shown) {
     const n = all.indexOf(s) + 1;
-    if (!arranging && u && (s.era || '') !== (lastEra ?? '') && s.era) list.append(h('div.era', s.era));
-    lastEra = s.era || '';
+    if (!arranging && u && eraKey(s.era) !== (lastEra ?? '') && s.era) list.append(h('div.era', s.era));
+    lastEra = eraKey(s.era);
     list.append(storyRow(s, { num: u ? n : null, arranging, mv: reorder ? moveArrows(s, u, n - 1, all.length) : null }));
   }
   w.append(list);
@@ -2005,7 +2085,7 @@ function drawBulk() {
           const eras = [...new Set(all.map(x => x.era).filter(Boolean))];
           const v = await askEra(eras, '');
           if (v === null) return;
-          await saveStories(ids().map(id => ({ ...S.stories.get(id), era: v })));
+          await setEra(ids(), v);
           render();
         },
       },
@@ -2182,8 +2262,10 @@ function viewTag(v, id) {
           click: async () => {
             const sel = h('select.field', groups().map(g => h('option', { value: g }, g)));
             sel.value = t.group || 'Other';
-            const custom = h('input.field', { type: 'text', placeholder: 'Or a new group name', style: { marginTop: '10px' } });
-            if (await ask({ title: 'Group', extra: [sel, custom], ok: 'Save' })) { await saveTag({ ...t, group: custom.value.trim() || sel.value, color: undefined }); render(); }
+            sel.append(h('option', { value: '__new' }, 'New group…'));
+            const custom = h('input.field', { type: 'text', placeholder: 'Name of the new group', hidden: true, style: { marginTop: '10px' } });
+            sel.addEventListener('change', () => { custom.hidden = sel.value !== '__new'; if (!custom.hidden) custom.focus(); });
+            if (await ask({ title: 'Group', extra: [sel, custom], ok: 'Save' })) { await saveTag({ ...t, group: sel.value === '__new' ? custom.value.trim() || t.group || 'Other' : sel.value, color: undefined }); render(); }
           },
         },
       }, 'Change group'),
@@ -2338,7 +2420,7 @@ async function checkUpdate(quiet) {
 
 (async function start() {
   const after = signInReturn();
-  try { if (isAdmin()) await loadAll(); else await loadPublished(); }
+  try { if (isAdmin()) { await loadAll(); await fixEraBlocks(); } else await loadPublished(); }
   catch (e) { document.body.replaceChildren(h('p', { style: { padding: '20px' } }, 'Callisto could not open its storage: ' + e.message)); return; }
   navigator.storage?.persist?.();
   route();
