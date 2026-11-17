@@ -253,7 +253,7 @@ function backgroundChecks() {
     pref.set('summaryCheckedAt', Date.now());
     fetch('data/library.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
       .then(lib => lib && lib.publishedAt !== pref.get('pubBase', '') ? keepSiteSummaries(lib, true) : 0)
-      .then(n => { if (n) { render(); toast(`${n} new summar${n === 1 ? 'y' : 'ies'} from the site.`, null, 5000); } })
+      .then(n => { if (n) { render(); toast('Picked up changes made on the site.', null, 5000); } })
       .catch(() => {});
   }
   if (G.valid() && Date.now() - pref.get('driveCheckedAt', 0) > 30 * 60000 && [...S.stories.values()].some(s => s.source?.driveId)) {
@@ -315,11 +315,19 @@ async function keepSiteSummaries(lib, quiet) {
     put.push({ ...mine, summary: s.summary, summaryAt: s.summaryAt, summaryBy: s.summaryBy, summaryStale: !!s.summaryStale });
   }
   if (put.length) { S.quiet = !!quiet; try { await saveStories(put); } finally { S.quiet = false; } }
+  // Stories Claude Code took off the site (a duplicate, say) are listed in lib.removed: drop them
+  // here too, or this copy would put them back on its next Publish.
+  const gone = lib?.publishedBy === 'claude' && Array.isArray(lib.removed) ? lib.removed.filter(id => S.stories.has(id)) : [];
+  if (gone.length) {
+    const us = new Set(gone.map(id => S.stories.get(id).universeId || ''));
+    S.quiet = !!quiet;
+    try { await deleteStories(gone); for (const u of us) await setOrder(u, storiesIn(u).map(x => x.id)); } finally { S.quiet = false; }
+  }
   // Claude Code's commits to the site (summaries, tidying) say which version of Laura's they were
   // built on. If that is this device's version, this copy has caught up: no "published from
   // somewhere else" warning. Its own data is kept and goes out with the next Publish.
   if (lib?.publishedBy === 'claude' && lib.basedOn && lib.basedOn === pref.get('pubBase', '')) pref.set('pubBase', lib.publishedAt);
-  return put.length;
+  return put.length + gone.length;
 }
 
 let publishing = false;
