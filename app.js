@@ -323,11 +323,36 @@ async function keepSiteSummaries(lib, quiet) {
     S.quiet = !!quiet;
     try { await deleteStories(gone); for (const u of us) await setOrder(u, storiesIn(u).map(x => x.id)); } finally { S.quiet = false; }
   }
+  // Stories Claude Code changed on the site (moved to another universe, say) are listed in
+  // lib.edited: the site's universe, era, tags and title win, and the story goes to the same
+  // place in its timeline as on the site.
+  const site = new Map((lib?.stories || []).map(x => [x.id, x]));
+  const edited = lib?.publishedBy === 'claude' && Array.isArray(lib.edited) ? lib.edited.filter(id => S.stories.has(id) && site.has(id)).filter(id => {
+    const a = S.stories.get(id), z = site.get(id);
+    const at = (lib.stories.filter(x => (x.universeId || '') === (z.universeId || '')).sort((p, q) => p.pos - q.pos).findIndex(x => x.id === id));
+    return (a.universeId || '') !== (z.universeId || '') || (a.era || '') !== (z.era || '') || a.title !== z.title || a.tags.join() !== z.tags.join() || storiesIn(z.universeId).findIndex(x => x.id === id) !== at;
+  }) : [];
+  if (edited.length) {
+    S.quiet = !!quiet;
+    try {
+      const us = new Set();
+      for (const id of edited) {
+        const z = site.get(id);
+        us.add(S.stories.get(id).universeId || ''); us.add(z.universeId || '');
+        await saveStories({ ...S.stories.get(id), universeId: z.universeId || '', era: z.era || '', title: z.title, tags: z.tags.filter(t => S.tags.has(t)) });
+      }
+      // Each universe touched takes the site's whole order; stories only on this device go last.
+      for (const u of us) {
+        const order = lib.stories.filter(x => (x.universeId || '') === u && S.stories.has(x.id)).sort((p, q) => p.pos - q.pos).map(x => x.id);
+        await setOrder(u, [...order, ...storiesIn(u).map(x => x.id).filter(id => !order.includes(id))]);
+      }
+    } finally { S.quiet = false; }
+  }
   // Claude Code's commits to the site (summaries, tidying) say which version of Laura's they were
   // built on. If that is this device's version, this copy has caught up: no "published from
   // somewhere else" warning. Its own data is kept and goes out with the next Publish.
   if (lib?.publishedBy === 'claude' && lib.basedOn && lib.basedOn === pref.get('pubBase', '')) pref.set('pubBase', lib.publishedAt);
-  return put.length + gone.length;
+  return put.length + gone.length + edited.length;
 }
 
 let publishing = false;
