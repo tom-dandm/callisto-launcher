@@ -433,6 +433,12 @@ function groupByEra(ids) {
     if (!blocks.has(k)) { blocks.set(k, []); out.push(blocks.get(k)); }
     blocks.get(k).push(id);
   }
+  // Seasons run Spring, Summer, Autumn, Winter (Tom, 17 Nov 2026): the season blocks swap
+  // between the places they hold, so other eras and stories with no era stay where they are.
+  const rank = b => SEASONS.findIndex(x => eraKey(x) === eraKey(S.stories.get(b[0])?.era));
+  const slots = out.map((b, i) => rank(b) >= 0 && blocks.has(eraKey(S.stories.get(b[0])?.era)) ? i : -1).filter(i => i >= 0);
+  const sorted = slots.map(i => out[i]).sort((a, b) => rank(a) - rank(b));
+  slots.forEach((i, n) => { out[i] = sorted[n]; });
   return out.flat();
 }
 // The one spelling of an era: a season or an era already in use wins over a new spelling of it.
