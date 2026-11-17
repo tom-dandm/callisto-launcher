@@ -458,3 +458,13 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
 .dragging-on .era { visibility: hidden; }
 .reorder .row { transition: background .6s; }
 .row.moved { background: var(--accent-soft); transition: none; }
+
+/* the manager's "+": a small round button beside what it adds to */
+.plus {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; padding: 0; border: 1px dashed var(--accent); border-radius: 50%;
+  background: none; color: var(--accent); font-size: 18px; line-height: 1; font-weight: 500;
+}
+.plus:hover, .plus:focus-visible { background: var(--accent-soft); border-style: solid; }
+.section-h:has(.plus) { align-items: center; }
+.head-end { display: inline-flex; align-items: center; gap: 12px; }

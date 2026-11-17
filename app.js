@@ -315,6 +315,10 @@ async function keepSiteSummaries(lib, quiet) {
     put.push({ ...mine, summary: s.summary, summaryAt: s.summaryAt, summaryBy: s.summaryBy, summaryStale: !!s.summaryStale });
   }
   if (put.length) { S.quiet = !!quiet; try { await saveStories(put); } finally { S.quiet = false; } }
+  // Claude Code's commits to the site (summaries, tidying) say which version of Laura's they were
+  // built on. If that is this device's version, this copy has caught up: no "published from
+  // somewhere else" warning. Its own data is kept and goes out with the next Publish.
+  if (lib?.publishedBy === 'claude' && lib.basedOn && lib.basedOn === pref.get('pubBase', '')) pref.set('pubBase', lib.publishedAt);
   return put.length;
 }
 
@@ -331,7 +335,8 @@ async function publish() {
     let r = await managerCall('publish', body, 'publish');
     if (r.conflict) {
       // Summaries written by Claude Code go straight to the site: carry them into this copy first.
-      if (await keepSiteSummaries()) { publishing = false; return await publish(); }
+      const base = pref.get('pubBase', '');
+      if (await keepSiteSummaries() || pref.get('pubBase', '') !== base) { publishing = false; return await publish(); }
       $('#toast').hidden = true;
       const ok = await ask({
         title: 'Published from somewhere else',
@@ -451,8 +456,21 @@ async function setEra(ids, v) {
     await setOrder(u, rest);
   }
 }
+// A tag named after a season becomes the story's era (only where it has no era: the era wins),
+// then the tag goes. Laura had made the seasons as tags before eras were the seasons.
+async function seasonTagsToEras() {
+  const season = new Map([...S.tags.values()].filter(t => SEASONS.some(x => eraKey(x) === eraKey(t.name))).map(t => [t.id, canonEra(t.name)]));
+  if (!season.size) return;
+  const upd = [...S.stories.values()].filter(x => x.tags.some(t => season.has(t))).map(x => {
+    const first = x.tags.find(t => season.has(t));
+    return { ...x, era: x.era ? canonEra(x.era) : season.get(first), tags: x.tags.filter(t => !season.has(t)) };
+  });
+  if (upd.length) await saveStories(upd);
+  for (const id of season.keys()) { S.tags.delete(id); await dbDel('tags', id); }
+}
 // Joins any era split into two blocks (run once the manager's copy is loaded).
 async function fixEraBlocks() {
+  await seasonTagsToEras();
   for (const u of new Set([...S.stories.values()].map(x => x.universeId || ''))) {
     const ids = storiesIn(u).map(x => x.id), grouped = groupByEra(ids);
     const spelled = ids.filter(id => { const e = S.stories.get(id).era; return e && canonEra(e) !== e; });
@@ -1179,6 +1197,51 @@ function ask({ title, text, ok = 'OK', cancel = 'Cancel', input, danger, extra }
   });
 }
 
+/* the manager's "+" (Tom, 17 Nov 2026: "just be + icon/button along the tags to add more") */
+// A small round + beside the things it adds to. Only drawn for the manager.
+function plusBtn(label, fn) { return h('button.plus', { type: 'button', 'aria-label': label, title: label, on: { click: fn } }, '+'); }
+// The story's era as a chip (tap to change) or a + when it has none. after() redraws the sheet.
+function eraChips(id, after) {
+  const s = S.stories.get(id);
+  const change = async () => {
+    const v = await askEra(null, s.era);
+    if (v !== null) { await setEra([id], v); rerenderSoon(); }
+    after();
+  };
+  return h('div.chips', s.era ? h('button.chip.plain', { type: 'button', title: 'Change the era', on: { click: change } }, s.era) : plusBtn('Set the era', change));
+}
+// Tick stories from every universe. save(added, removed) gets the ids that changed.
+function pickStories(title, isOn, save) {
+  const on = new Set([...S.stories.values()].filter(isOn).map(x => x.id));
+  const start = new Set(on);
+  const box = h('div');
+  const draw = () => {
+    box.replaceChildren();
+    for (const u of [...universesSorted().map(x => x.id), '']) {
+      const ss = storiesIn(u);
+      if (!ss.length) continue;
+      box.append(h('h3', uName(u)), h('div.chips', ss.map(x => h('button.chip.plain' + (on.has(x.id) ? '.on' : ''), {
+        type: 'button', 'aria-pressed': String(on.has(x.id)),
+        on: { click: () => { on.has(x.id) ? on.delete(x.id) : on.add(x.id); draw(); } },
+      }, on.has(x.id) ? '✓ ' : '', x.title))));
+    }
+  };
+  draw();
+  openSheet([
+    h('h2', title), h('p.sub', 'Tap stories to tick or untick them.'), box,
+    h('div.foot',
+      h('button.btn', { type: 'button', on: { click: closeSheet } }, 'Cancel'),
+      h('button.btn.primary', {
+        type: 'button', on: {
+          click: async () => {
+            await save([...on].filter(x => !start.has(x)), [...start].filter(x => !on.has(x)));
+            closeSheet(); render();
+          },
+        },
+      }, 'Done')),
+  ]);
+}
+
 /* story details */
 // Everyone taps a story into the reading sheet; the manager's tools sit behind "Edit details".
 function openStory(id) { return openStoryReader(id); }
@@ -1190,7 +1253,6 @@ async function openStoryManage(id) {
   const i = list.findIndex(x => x.id === id);
   const tags = s.tags.map(t => S.tags.get(t)).filter(Boolean);
   const refresh = () => openStoryManage(id);
-  const eras = [...new Set(list.map(x => x.era).filter(Boolean))];
   const pg = prog(id);
   const pct = Math.round(pg.readPos * 100);
 
@@ -1207,22 +1269,13 @@ async function openStoryManage(id) {
     h('h3', 'Tags'),
     h('div.chips',
       tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, title: 'Remove this tag', on: { click: async () => { await saveStories({ ...s, tags: s.tags.filter(x => x !== t.id) }); refresh(); rerenderSoon(); } } }, t.name, h('span.x', '×'))),
-      h('button.chip.add', { type: 'button', on: { click: () => pickTags([id], refresh) } }, '+ Tag')),
+      plusBtn('Add or remove tags', () => pickTags([id], refresh))),
+    h('h3', 'Era'), eraChips(id, refresh),
     h('h3', 'Timeline'),
     h('div.btn-row',
       h('button.btn.small', { type: 'button', disabled: i <= 0, on: { click: async () => { const ids = list.map(x => x.id); [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↑ Earlier'),
       h('button.btn.small', { type: 'button', disabled: i >= list.length - 1, on: { click: async () => { const ids = list.map(x => x.id); [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]]; await setOrder(s.universeId, ids); refresh(); rerenderSoon(); } } }, '↓ Later'),
       h('button.btn.small', { type: 'button', on: { click: () => pickPlace([id], async (u, at) => { await placeStories([id], u, at); rerenderSoon(); openStoryManage(id); }) } }, 'Move…'),
-      h('button.btn.small', {
-        type: 'button', on: {
-          click: async () => {
-            const v = await askEra(eras, s.era);
-            if (v === null) return openStoryManage(id);
-            await setEra([id], v);
-            rerenderSoon(); openStoryManage(id);
-          },
-        },
-      }, s.era ? 'Change era' : 'Set era'),
       h('button.btn.small', { type: 'button', on: { click: () => addFlow({ u: s.universeId, at: i + 1 }) } }, '+ Add a story after this')),
     h('h3', 'Details'),
     h('dl.kv',
@@ -1270,7 +1323,9 @@ function openStoryReader(id) {
     storyActions(id, () => { openStory(id); rerenderSoon(); }),
     s.summary ? [h('h3', 'Summary'), h('p.summary', s.summary)] : null,
     s.blurb ? [h('h3', "Author's summary"), h('p.blurb', s.blurb)] : null,
-    tags.length ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)))] : null,
+    isAdmin() ? [h('h3', 'Era'), eraChips(id, () => openStory(id))] : null,
+    tags.length || isAdmin() ? [h('h3', 'Tags'), h('div.chips', tags.map(t => h('button.chip', { type: 'button', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id) } }, t.name)),
+      isAdmin() ? plusBtn('Add or remove tags', () => pickTags([id], () => openStory(id))) : null)] : null,
     s.universeId && (list[i - 1] || list[i + 1]) ? [h('h3', 'In the timeline'), h('div.near', near(list[i - 1], 'Before this'), near(list[i + 1], 'After this'))] : null,
     isAdmin() ? h('div.manage-link', h('button.btn.small', { type: 'button', on: { click: () => openStoryManage(id) } }, 'Edit details')) : null,
   ]);
@@ -1930,7 +1985,7 @@ function viewLibrary(v) {
         h('span.bm-u', uName(s.universeId) + (s.era ? ' · ' + s.era : ''))))));
   }
   // The universes as a table of contents.
-  home.append(h('div.section-h', h('h2', 'Contents'), A ? h('button.btn.small', { type: 'button', on: { click: newUniverseFlow } }, '+ New universe') : null));
+  home.append(h('div.section-h', h('h2', 'Contents'), A ? plusBtn('New universe', newUniverseFlow) : null));
   const toc = h('ol.toc');
   const entry = (href, num, u, name, n, sub) => h('li', h('a.toc-row', { href },
     h('span.toc-n', num), uIcon(u, 'u-icon-sm'), h('span.toc-t', name), h('span.leader'), h('span.toc-p', count(n)),
@@ -1947,7 +2002,7 @@ function viewLibrary(v) {
   // Tags as the index at the back: most used first; "All tags" for the full list and new tags.
   const used = tagsSorted().map(t => [t, tagUse(t.id)]).filter(([t, n]) => n || A).sort((a, b) => b[1] - a[1]);
   if (used.length || A) {
-    home.append(h('div.section-h', h('h2', 'Index'), h('a.small', { href: '#/tags' }, A ? 'All tags and new tags' : 'All tags')),
+    home.append(h('div.section-h', h('h2', 'Index'), h('span.head-end', h('a.small', { href: '#/tags' }, 'All tags'), A ? plusBtn('New tag', () => newTagFlow()) : null)),
       h('p.index', used.slice(0, 24).flatMap(([t], k) => [k ? h('span.sep', ' · ') : null, h('a', { href: '#/tag/' + t.id }, t.name)])));
   }
   v.append(w);
@@ -2229,7 +2284,7 @@ function viewTags(v) {
   for (const g of groups()) {
     const ts = tagsSorted().filter(t => (t.group || 'Other') === g);
     if (!ts.length) continue;
-    w.append(h('div.tag-group', h('div.section-h', h('h2', g), A ? h('button.chip.add', { type: 'button', on: { click: () => newTagFlow(g) } }, `+ Add to ${g}`) : null),
+    w.append(h('div.tag-group', h('div.section-h', h('h2', g), A ? plusBtn(`New ${g} tag`, () => newTagFlow(g)) : null),
       ts.map(t => h('div.tag-line', { role: 'button', tabindex: '0', css: { '--c': tagColor(t) }, on: { click: () => go('#/tag/' + t.id), keydown: e => { if (e.key === 'Enter') go('#/tag/' + t.id); } } },
         h('span.sw'), h('span', t.name), h('span.n', tagUse(t.id))))));
   }
@@ -2294,7 +2349,10 @@ function viewTag(v, id) {
       }, 'Delete tag')),
   ]);
   setBar(t.name, { back: true, actions: isAdmin() ? [iconBtn('more', 'Manage tag', manage)] : [] });
-  const w = h('div.wrap', h('p.muted.small', { style: { margin: '0 0 12px' } }, `${t.group || 'Other'} · ${tagUse(t.id)} stories`));
+  const addTo = () => pickStories(`Stories tagged ${t.name}`, x => x.tags.includes(t.id), async (add, del) => {
+    await saveStories([...add.map(id => { const x = S.stories.get(id); return { ...x, tags: [...x.tags, t.id] }; }), ...del.map(id => { const x = S.stories.get(id); return { ...x, tags: x.tags.filter(y => y !== t.id) }; })]);
+  });
+  const w = h('div.wrap', h('div.section-h', h('p.muted.small', { style: { margin: 0 } }, `${t.group || 'Other'} · ${tagUse(t.id)} stories`), isAdmin() ? plusBtn('Add stories to this tag', addTo) : null));
   const list = [...S.stories.values()].filter(s => s.tags.includes(t.id));
   const byU = new Map();
   for (const s of list) { if (!byU.has(s.universeId || '')) byU.set(s.universeId || '', []); byU.get(s.universeId || '').push(s); }
