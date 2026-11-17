@@ -336,6 +336,11 @@ async function keepSiteSummaries(lib, quiet) {
     S.quiet = !!quiet;
     try {
       const us = new Set();
+      // A universe Claude Code made on the site for these stories (an AU split off, say) comes too.
+      for (const id of edited) {
+        const v = (lib.universes || []).find(x => x.id === site.get(id).universeId);
+        if (v && !S.universes.has(v.id)) await saveUniverse(v);
+      }
       for (const id of edited) {
         const z = site.get(id);
         us.add(S.stories.get(id).universeId || ''); us.add(z.universeId || '');
